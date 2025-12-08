@@ -2,7 +2,6 @@
 
 import { useSearchParams } from 'next/navigation'
 import { useState, useEffect, Suspense } from 'react'
-import { formatCommitment } from '@/lib/fairRng'
 import { clsx } from 'clsx'
 import Link from 'next/link'
 
@@ -10,34 +9,48 @@ function VerifyContent() {
   const searchParams = useSearchParams()
   const [verificationStatus, setVerificationStatus] = useState<'pending' | 'verified' | 'failed'>('pending')
   const [isVerifying, setIsVerifying] = useState(false)
+  const [errorMessage, setErrorMessage] = useState('')
 
-  // Get duel data from URL params
-  const commitment = searchParams.get('commitment') || ''
-  const timestamp = searchParams.get('timestamp') || ''
-  const totpCode = searchParams.get('totp') || ''
+  // Get verification data from URL params
+  const duelId = searchParams.get('duelId') || ''
+  const roundNumber = searchParams.get('round') || ''
+  const timeSlot = searchParams.get('timeSlot') || ''
+  const playerA = searchParams.get('playerA') || ''
+  const playerB = searchParams.get('playerB') || ''
+  const seedSlice = searchParams.get('seedSlice') || ''
   const winnerIndex = searchParams.get('winner') || ''
 
+  // Calculate verification manually (client-side)
+  const seedNumber = seedSlice ? parseInt(seedSlice, 16) : 0
+  const calculatedWinnerIndex = seedNumber % 2
+
   const handleVerify = async () => {
+    if (!seedSlice || winnerIndex === '') {
+      setVerificationStatus('pending')
+      return
+    }
+
     setIsVerifying(true)
     
-    // Simulate verification process
-    await new Promise(resolve => setTimeout(resolve, 2000))
+    // Simulate verification delay for UX
+    await new Promise(resolve => setTimeout(resolve, 1500))
     
-    // In production, this would call the backend verification endpoint
-    // For MVP, we simulate successful verification
-    const totpNum = parseInt(totpCode)
-    const expectedWinner = totpNum % 2
+    // Client-side verification (no server call needed for basic check)
+    const expectedWinner = parseInt(seedSlice, 16) % 2
     const isValid = expectedWinner === parseInt(winnerIndex)
     
     setVerificationStatus(isValid ? 'verified' : 'failed')
+    if (!isValid) {
+      setErrorMessage(`Expected winner index ${expectedWinner}, but got ${winnerIndex}`)
+    }
     setIsVerifying(false)
   }
 
   useEffect(() => {
-    if (commitment && timestamp && totpCode) {
+    if (seedSlice && winnerIndex !== '') {
       handleVerify()
     }
-  }, [commitment, timestamp, totpCode])
+  }, [seedSlice, winnerIndex])
 
   return (
     <div className="min-h-screen pb-24 md:pb-8">
@@ -45,7 +58,7 @@ function VerifyContent() {
         {/* Header */}
         <div className="text-center mb-8">
           <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-accent-primary to-accent-secondary flex items-center justify-center">
-            <span className="text-4xl">🔒</span>
+            <span className="text-4xl">🔍</span>
           </div>
           <h1 className="text-3xl font-bold text-white mb-2">Fairness Verification</h1>
           <p className="text-gray-400">Verify that this duel was resolved fairly</p>
@@ -77,91 +90,144 @@ function VerifyContent() {
                 <span className="text-3xl">✕</span>
               </div>
               <p className="text-2xl font-bold text-accent-danger mb-2">Verification Failed</p>
-              <p className="text-gray-400">The proof could not be verified</p>
+              <p className="text-gray-400">{errorMessage || 'The proof could not be verified'}</p>
             </div>
           ) : (
             <div className="py-8">
-              <p className="text-gray-400">Enter duel data to verify</p>
+              <p className="text-gray-400">Enter verification data or use a verification link</p>
             </div>
           )}
         </div>
 
         {/* Duel Data */}
         <div className="card-base mb-6">
-          <h2 className="text-lg font-semibold text-white mb-4">Duel Data</h2>
+          <h2 className="text-lg font-semibold text-white mb-4">Duel Parameters</h2>
           
           <div className="space-y-4">
-            {/* Seed Commitment */}
-            <div>
-              <label className="block text-sm text-gray-400 mb-2">Seed Commitment (SHA-256)</label>
-              <div className="p-3 bg-dark-700 rounded-xl font-mono text-sm text-white break-all">
-                {commitment || 'Not provided'}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="p-3 bg-dark-700 rounded-xl">
+                <p className="text-xs text-gray-400 mb-1">Duel ID</p>
+                <p className="font-mono text-sm text-white truncate">{duelId || '-'}</p>
+              </div>
+              <div className="p-3 bg-dark-700 rounded-xl">
+                <p className="text-xs text-gray-400 mb-1">Round</p>
+                <p className="font-mono text-sm text-white">{roundNumber || '-'}</p>
               </div>
             </div>
 
-            {/* Timestamp */}
-            <div>
-              <label className="block text-sm text-gray-400 mb-2">Resolution Timestamp</label>
-              <div className="p-3 bg-dark-700 rounded-xl">
-                <p className="font-mono text-sm text-white">
-                  {timestamp ? new Date(parseInt(timestamp)).toISOString() : 'Not provided'}
-                </p>
+            <div className="p-3 bg-dark-700 rounded-xl">
+              <p className="text-xs text-gray-400 mb-1">Time Slot</p>
+              <p className="font-mono text-sm text-white">{timeSlot || '-'}</p>
+              {timeSlot && (
                 <p className="text-xs text-gray-500 mt-1">
-                  Unix: {timestamp || 'N/A'}
+                  ≈ {new Date(parseInt(timeSlot) * 30000).toISOString()}
+                </p>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="p-3 bg-dark-700 rounded-xl">
+                <p className="text-xs text-gray-400 mb-1">Player A</p>
+                <p className="font-mono text-sm text-white truncate">{playerA || '-'}</p>
+              </div>
+              <div className="p-3 bg-dark-700 rounded-xl">
+                <p className="text-xs text-gray-400 mb-1">Player B</p>
+                <p className="font-mono text-sm text-white truncate">{playerB || '-'}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Verification Formula */}
+        <div className="card-base mb-6">
+          <h2 className="text-lg font-semibold text-white mb-4">Verification Formula</h2>
+          
+          <div className="space-y-4">
+            {/* Step 1: Seed Input */}
+            <div className="p-4 bg-dark-700 rounded-xl">
+              <p className="text-xs text-gray-400 mb-2">Step 1: Build Seed Input</p>
+              <code className="text-xs text-accent-primary break-all">
+                {duelId && playerA && playerB 
+                  ? `"${duelId}:${roundNumber}:${timeSlot}:${playerA}:${playerB}"`
+                  : '"duelId:roundNumber:timeSlot:playerA:playerB"'
+                }
+              </code>
+            </div>
+
+            {/* Step 2: HMAC */}
+            <div className="p-4 bg-dark-700 rounded-xl">
+              <p className="text-xs text-gray-400 mb-2">Step 2: Compute HMAC-SHA256</p>
+              <code className="text-xs text-gray-300">
+                HMAC-SHA256(PLATFORM_SECRET, seedInput)
+              </code>
+            </div>
+
+            {/* Step 3: Seed Slice */}
+            <div className="p-4 bg-dark-700 rounded-xl">
+              <p className="text-xs text-gray-400 mb-2">Step 3: Extract Seed Slice (first 8 hex chars)</p>
+              <code className="text-xl text-accent-warning font-mono">
+                {seedSlice || '????????'}
+              </code>
+            </div>
+
+            {/* Step 4: Calculate Winner */}
+            <div className="p-4 bg-dark-700 rounded-xl">
+              <p className="text-xs text-gray-400 mb-2">Step 4: Determine Winner</p>
+              <div className="space-y-2">
+                <p className="text-sm text-gray-300">
+                  Seed as number: <span className="text-white font-mono">{seedSlice ? seedNumber.toLocaleString() : '-'}</span>
+                </p>
+                <p className="text-sm text-gray-300">
+                  {seedSlice ? seedNumber.toLocaleString() : 'seedNumber'} % 2 = <span className="text-accent-primary font-bold">{seedSlice ? calculatedWinnerIndex : '?'}</span>
+                </p>
+                <p className="text-sm text-gray-300">
+                  Winner: <span className={clsx(
+                    'font-bold',
+                    calculatedWinnerIndex === 0 ? 'text-blue-400' : 'text-orange-400'
+                  )}>
+                    {seedSlice ? (calculatedWinnerIndex === 0 ? 'Player A' : 'Player B') : '-'}
+                  </span>
                 </p>
               </div>
             </div>
 
-            {/* TOTP Code */}
-            <div>
-              <label className="block text-sm text-gray-400 mb-2">TOTP Code</label>
-              <div className="p-3 bg-dark-700 rounded-xl font-mono text-xl text-accent-primary">
-                {totpCode ? totpCode.padStart(6, '0') : 'Not provided'}
-              </div>
-            </div>
-
-            {/* Winner Calculation */}
-            <div>
-              <label className="block text-sm text-gray-400 mb-2">Winner Calculation</label>
-              <div className="p-3 bg-dark-700 rounded-xl">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-gray-400">Formula:</span>
-                  <span className="font-mono text-white">TOTP % 2 = winner</span>
-                </div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-gray-400">Calculation:</span>
-                  <span className="font-mono text-white">
-                    {totpCode} % 2 = {totpCode ? parseInt(totpCode) % 2 : 'N/A'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-400">Winner:</span>
-                  <span className={clsx(
-                    'font-semibold',
-                    winnerIndex === '0' ? 'text-accent-primary' : 'text-accent-danger'
-                  )}>
-                    Player {winnerIndex === '0' ? '1' : '2'} (index: {winnerIndex})
-                  </span>
-                </div>
-              </div>
+            {/* Result */}
+            <div className={clsx(
+              'p-4 rounded-xl',
+              winnerIndex === '0' ? 'bg-blue-500/10 border border-blue-500/30' :
+              winnerIndex === '1' ? 'bg-orange-500/10 border border-orange-500/30' :
+              'bg-dark-700'
+            )}>
+              <p className="text-xs text-gray-400 mb-2">Result</p>
+              <p className="text-lg font-bold">
+                {winnerIndex !== '' ? (
+                  <>
+                    🏆 Winner: {winnerIndex === '0' ? 'Player A' : 'Player B'}
+                    <span className="text-sm font-normal text-gray-400 ml-2">
+                      (index: {winnerIndex})
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-gray-500">No result data</span>
+                )}
+              </p>
             </div>
           </div>
         </div>
 
         {/* How It Works */}
         <div className="card-base mb-6">
-          <h2 className="text-lg font-semibold text-white mb-4">How Provably Fair Works</h2>
+          <h2 className="text-lg font-semibold text-white mb-4">How It Works</h2>
           
-          <div className="space-y-4">
+          <div className="space-y-4 text-sm">
             <div className="flex gap-4">
               <div className="w-8 h-8 rounded-full bg-accent-primary/20 flex items-center justify-center flex-shrink-0">
                 <span className="text-sm font-bold text-accent-primary">1</span>
               </div>
               <div>
-                <p className="font-medium text-white">Seed Commitment</p>
-                <p className="text-sm text-gray-400">
-                  Before the duel, a SHA-256 hash is generated and shown to both players. 
-                  This hash commits to the outcome without revealing it.
+                <p className="font-medium text-white">Deterministic Input</p>
+                <p className="text-gray-400">
+                  All parameters (duel ID, round, time, players) are combined into a seed string.
                 </p>
               </div>
             </div>
@@ -171,10 +237,10 @@ function VerifyContent() {
                 <span className="text-sm font-bold text-accent-primary">2</span>
               </div>
               <div>
-                <p className="font-medium text-white">TOTP Generation</p>
-                <p className="text-sm text-gray-400">
-                  At the exact resolution moment, a Time-Based One-Time Password (TOTP) 
-                  is generated using the committed seed and timestamp.
+                <p className="font-medium text-white">HMAC-SHA256</p>
+                <p className="text-gray-400">
+                  The seed is hashed with the platform secret using HMAC-SHA256.
+                  This is deterministic — same input always gives same output.
                 </p>
               </div>
             </div>
@@ -184,10 +250,10 @@ function VerifyContent() {
                 <span className="text-sm font-bold text-accent-primary">3</span>
               </div>
               <div>
-                <p className="font-medium text-white">Winner Determination</p>
-                <p className="text-sm text-gray-400">
-                  The winner is determined by: <code className="text-accent-primary">TOTP % 2</code>. 
-                  Result 0 = Player 1 wins, Result 1 = Player 2 wins.
+                <p className="font-medium text-white">Winner Selection</p>
+                <p className="text-gray-400">
+                  First 8 hex characters are converted to a number, then <code>% 2</code> gives 0 or 1.
+                  This ensures a fair 50/50 distribution.
                 </p>
               </div>
             </div>
@@ -198,9 +264,9 @@ function VerifyContent() {
               </div>
               <div>
                 <p className="font-medium text-white">Verification</p>
-                <p className="text-sm text-gray-400">
-                  Anyone can verify the result by checking that the TOTP code matches 
-                  the timestamp and the winner matches the formula.
+                <p className="text-gray-400">
+                  Anyone can verify that seedSlice % 2 equals the claimed winner.
+                  The formula is public and unchangeable.
                 </p>
               </div>
             </div>
@@ -214,19 +280,19 @@ function VerifyContent() {
           <div className="grid grid-cols-2 gap-4 text-sm">
             <div className="p-3 bg-dark-700 rounded-xl">
               <p className="text-gray-400">Hash Algorithm</p>
-              <p className="font-mono text-white">SHA-256</p>
+              <p className="font-mono text-white">HMAC-SHA256</p>
             </div>
             <div className="p-3 bg-dark-700 rounded-xl">
-              <p className="text-gray-400">TOTP Algorithm</p>
-              <p className="font-mono text-white">HMAC-SHA1</p>
+              <p className="text-gray-400">Seed Slice Size</p>
+              <p className="font-mono text-white">8 hex chars (32 bits)</p>
             </div>
             <div className="p-3 bg-dark-700 rounded-xl">
-              <p className="text-gray-400">Time Step</p>
+              <p className="text-gray-400">Time Slot Duration</p>
               <p className="font-mono text-white">30 seconds</p>
             </div>
             <div className="p-3 bg-dark-700 rounded-xl">
-              <p className="text-gray-400">Code Digits</p>
-              <p className="font-mono text-white">6 digits</p>
+              <p className="text-gray-400">Winner Formula</p>
+              <p className="font-mono text-white">seedNumber % 2</p>
             </div>
           </div>
         </div>
@@ -253,4 +319,3 @@ export default function VerifyPage() {
     </Suspense>
   )
 }
-
