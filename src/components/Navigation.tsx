@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useAuth } from '@/contexts/AuthContext'
 import { clsx } from 'clsx'
 
 const navItems = [
@@ -9,11 +10,16 @@ const navItems = [
   { href: '/offers', label: 'Offers', icon: '📋' },
   { href: '/my-duels', label: 'My Duels', icon: '🎮' },
   { href: '/portfolio', label: 'Portfolio', icon: '🎒' },
-  { href: '/profile', label: 'Profile', icon: '👤' },
 ]
 
 export function Navigation() {
   const pathname = usePathname()
+  const { user, isLoading, isAuthenticated } = useAuth()
+
+  // Don't show nav on auth pages
+  if (pathname === '/login' || pathname === '/register') {
+    return null
+  }
 
   return (
     <header className="sticky top-0 z-50 glass border-b border-white/5">
@@ -46,19 +52,46 @@ export function Navigation() {
             ))}
           </nav>
 
-          {/* Balance & Actions */}
+          {/* User Section */}
           <div className="flex items-center gap-3">
-            {/* Balance */}
-            <div className="hidden sm:flex items-center gap-2 px-4 py-2 bg-dark-700 rounded-xl">
-              <span className="text-accent-warning">💎</span>
-              <span className="font-semibold">2,450</span>
-            </div>
+            {isLoading ? (
+              <div className="w-8 h-8 rounded-full bg-dark-600 animate-pulse" />
+            ) : isAuthenticated && user ? (
+              <>
+                {/* Balance */}
+                <div className="hidden sm:flex items-center gap-2 px-4 py-2 bg-dark-700 rounded-xl">
+                  <span className="text-accent-warning">💎</span>
+                  <span className="font-semibold">{user.pointsBalance.toLocaleString()}</span>
+                </div>
 
-            {/* Create Duel Button */}
-            <button className="btn-primary text-sm">
-              <span className="hidden sm:inline">Create Duel</span>
-              <span className="sm:hidden">+</span>
-            </button>
+                {/* User Menu */}
+                <Link
+                  href="/account"
+                  className={clsx(
+                    'flex items-center gap-2 px-3 py-2 rounded-xl transition-all',
+                    pathname === '/account'
+                      ? 'bg-accent-primary/20'
+                      : 'hover:bg-dark-700'
+                  )}
+                >
+                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent-primary to-accent-secondary flex items-center justify-center text-sm font-bold">
+                    {user.username[0].toUpperCase()}
+                  </div>
+                  <span className="hidden sm:block text-sm font-medium text-white">
+                    {user.username}
+                  </span>
+                </Link>
+              </>
+            ) : (
+              <>
+                <Link href="/login" className="btn-secondary text-sm">
+                  Login
+                </Link>
+                <Link href="/register" className="btn-primary text-sm hidden sm:inline-flex">
+                  Register
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -71,7 +104,7 @@ export function Navigation() {
               key={item.href}
               href={item.href}
               className={clsx(
-                'flex flex-col items-center gap-1 px-4 py-2 rounded-xl text-xs font-medium transition-all duration-300',
+                'flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-xs font-medium transition-all duration-300',
                 pathname === item.href
                   ? 'text-accent-primary'
                   : 'text-gray-500'
@@ -81,9 +114,21 @@ export function Navigation() {
               <span>{item.label}</span>
             </Link>
           ))}
+          {/* Account link for mobile */}
+          <Link
+            href={isAuthenticated ? '/account' : '/login'}
+            className={clsx(
+              'flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-xs font-medium transition-all duration-300',
+              pathname === '/account'
+                ? 'text-accent-primary'
+                : 'text-gray-500'
+            )}
+          >
+            <span className="text-xl">👤</span>
+            <span>{isAuthenticated ? 'Account' : 'Login'}</span>
+          </Link>
         </div>
       </nav>
     </header>
   )
 }
-
