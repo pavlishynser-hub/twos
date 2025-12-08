@@ -150,8 +150,8 @@ export interface FairnessProof {
   timeSlot: number
   /** First 8 hex chars of HMAC */
   seedSlice: string
-  /** Winner index (0 or 1) */
-  winnerIndex: 0 | 1
+  /** Winner index (0 = A, 1 = B, -1 = draw) */
+  winnerIndex: 0 | 1 | -1
   /** Verification formula */
   formula: string
 }

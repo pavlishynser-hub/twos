@@ -10,7 +10,11 @@ import {
   FairnessProof,
   CONSTANTS 
 } from '../types'
-import { RandomnessEngine } from './randomnessEngine'
+import { 
+  determineWinner, 
+  calculateTimeSlot,
+  DuelRoundParams 
+} from './winnerDetermination'
 import { P2POrderService } from './p2pOrderService'
 import { ReliabilityService } from './reliabilityService'
 
@@ -26,16 +30,16 @@ interface DuelGameRecord {
   result: GameResult
   winnerId: string | null
   
-  // Randomness
-  serverSeedHash: string | null
-  serverSecretSeed: string | null
-  roundNonce: string | null
-  externalRandom: string | null
+  // Randomness (new system)
+  timeSlot: number | null
+  seedSlice: string | null
   randomNumber: number | null
   
-  // Player inputs
-  playerACode: string | null
-  playerBCode: string | null
+  // Player inputs (numbers 0-999999)
+  playerANumber: number | null
+  playerBNumber: number | null
+  playerADistance: number | null
+  playerBDistance: number | null
   playerASubmittedAt: Date | null
   playerBSubmittedAt: Date | null
   
@@ -60,12 +64,6 @@ export class DuelGameService {
     playerBId: string,
     playerBUsername: string
   ): Promise<DuelGameDto> {
-    // Generate randomness commitment
-    const { source, commitment } = await RandomnessEngine.createGameRandomSource(
-      orderId,
-      gameIndex
-    )
-
     const deadline = new Date(Date.now() + CONSTANTS.GAME_TIMEOUT_MS)
 
     const game: DuelGameRecord = {
@@ -79,15 +77,15 @@ export class DuelGameService {
       result: 'NOT_PLAYED',
       winnerId: null,
       
-      // Store randomness (secret seed hidden until game end)
-      serverSeedHash: commitment,
-      serverSecretSeed: source.serverSecretSeed, // Keep secret until reveal
-      roundNonce: source.roundNonce,
-      externalRandom: source.externalRandom,
+      // Randomness will be calculated when both players submit
+      timeSlot: null,
+      seedSlice: null,
       randomNumber: null,
       
-      playerACode: null,
-      playerBCode: null,
+      playerANumber: null,
+      playerBNumber: null,
+      playerADistance: null,
+      playerBDistance: null,
       playerASubmittedAt: null,
       playerBSubmittedAt: null,
       
@@ -99,16 +97,16 @@ export class DuelGameService {
 
     gamesStore.set(game.id, game)
 
-    return this.toDto(game, false) // Don't reveal secret seed yet
+    return this.toDto(game, false)
   }
 
   /**
-   * Submit player code (TOTP input)
+   * Submit player number (0-999999)
    */
-  static async submitPlayerCode(
+  static async submitPlayerNumber(
     gameId: string,
     playerId: string,
-    code: string
+    playerNumber: number
   ): Promise<{ success: boolean; game?: DuelGameDto; error?: string }> {
     const game = gamesStore.get(gameId)
 
@@ -126,23 +124,23 @@ export class DuelGameService {
       return { success: false, error: 'Game deadline expired' }
     }
 
-    // Validate code format (6 digits)
-    if (!/^\d{6}$/.test(code)) {
-      return { success: false, error: 'Invalid code format (must be 6 digits)' }
+    // Validate number range
+    if (!Number.isInteger(playerNumber) || playerNumber < 0 || playerNumber > 999999) {
+      return { success: false, error: 'Invalid number (must be 0-999999)' }
     }
 
     // Record submission
     if (playerId === game.playerAId) {
-      if (game.playerACode) {
+      if (game.playerANumber !== null) {
         return { success: false, error: 'Already submitted' }
       }
-      game.playerACode = code
+      game.playerANumber = playerNumber
       game.playerASubmittedAt = new Date()
     } else if (playerId === game.playerBId) {
-      if (game.playerBCode) {
+      if (game.playerBNumber !== null) {
         return { success: false, error: 'Already submitted' }
       }
-      game.playerBCode = code
+      game.playerBNumber = playerNumber
       game.playerBSubmittedAt = new Date()
     } else {
       return { success: false, error: 'Player not in this game' }
@@ -151,7 +149,7 @@ export class DuelGameService {
     gamesStore.set(gameId, game)
 
     // Check if both players submitted
-    if (game.playerACode && game.playerBCode) {
+    if (game.playerANumber !== null && game.playerBNumber !== null) {
       await this.resolveGame(gameId)
     }
 
@@ -164,23 +162,50 @@ export class DuelGameService {
 
   /**
    * Resolve game after both players submitted
+   * Uses new "Closest Number Wins" mechanic
    */
   static async resolveGame(gameId: string): Promise<void> {
     const game = gamesStore.get(gameId)
-    if (!game || !game.playerACode || !game.playerBCode) return
+    if (!game || game.playerANumber === null || game.playerBNumber === null) return
 
-    const playerACode = parseInt(game.playerACode, 10)
-    const playerBCode = parseInt(game.playerBCode, 10)
+    const timeSlot = calculateTimeSlot()
 
-    // Determine winner
-    const result = await RandomnessEngine.determineWinner(playerACode, playerBCode)
+    // Use new winner determination
+    const params: DuelRoundParams = {
+      duelId: `${game.orderId}_game_${game.gameIndex}`,
+      roundNumber: game.gameIndex,
+      timeSlot,
+      playerA: {
+        playerId: game.playerAId,
+        playerNumber: game.playerANumber,
+      },
+      playerB: {
+        playerId: game.playerBId,
+        playerNumber: game.playerBNumber,
+      },
+    }
+
+    const result = determineWinner(params)
+
+    // Update game with results
+    game.timeSlot = timeSlot
+    game.seedSlice = result.verification.seedSlice
+    game.randomNumber = result.randomNumber
+    game.playerADistance = result.distanceA
+    game.playerBDistance = result.distanceB
     
-    game.result = result
-    game.winnerId = result === 'A_WINS' 
-      ? game.playerAId 
-      : result === 'B_WINS' 
-        ? game.playerBId 
-        : null
+    // Determine result
+    if (result.isDraw) {
+      game.result = 'DRAW'
+      game.winnerId = null
+    } else if (result.winnerIndex === 0) {
+      game.result = 'A_WINS'
+      game.winnerId = game.playerAId
+    } else {
+      game.result = 'B_WINS'
+      game.winnerId = game.playerBId
+    }
+    
     game.completedAt = new Date()
 
     gamesStore.set(gameId, game)
@@ -203,8 +228,8 @@ export class DuelGameService {
     const game = gamesStore.get(gameId)
     if (!game) return
 
-    const playerASubmitted = !!game.playerACode
-    const playerBSubmitted = !!game.playerBCode
+    const playerASubmitted = game.playerANumber !== null
+    const playerBSubmitted = game.playerBNumber !== null
 
     if (!playerASubmitted && !playerBSubmitted) {
       // Both forfeited
@@ -294,14 +319,12 @@ export class DuelGameService {
     }
 
     let fairnessProof: FairnessProof | null = null
-    if (game.serverSeedHash) {
+    if (revealSecrets && game.seedSlice) {
       fairnessProof = {
-        serverSeedHash: game.serverSeedHash,
-        roundNonce: game.roundNonce || '',
-        // Only reveal after game is complete
-        serverSecretSeed: revealSecrets ? game.serverSecretSeed || undefined : undefined,
-        externalRandom: revealSecrets ? game.externalRandom || undefined : undefined,
-        randomNumber: revealSecrets ? game.randomNumber || undefined : undefined,
+        timeSlot: game.timeSlot || 0,
+        seedSlice: game.seedSlice,
+        winnerIndex: game.result === 'A_WINS' ? 0 : game.result === 'B_WINS' ? 1 : -1,
+        formula: `Random: ${game.randomNumber}, Distance A: ${game.playerADistance}, Distance B: ${game.playerBDistance}`,
       }
     }
 
@@ -325,4 +348,3 @@ export class DuelGameService {
 function generateId(): string {
   return `game_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 }
-
