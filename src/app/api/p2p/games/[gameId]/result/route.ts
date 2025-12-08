@@ -1,7 +1,7 @@
 /**
  * Game Result API
  * 
- * POST /api/p2p/games/[gameId]/result - Submit TOTP code for game
+ * POST /api/p2p/games/[gameId]/result - Submit player number for game
  * GET /api/p2p/games/[gameId]/result - Get game result and fairness proof
  */
 
@@ -20,7 +20,7 @@ interface RouteParams {
 
 /**
  * POST /api/p2p/games/[gameId]/result
- * Submit player's TOTP code
+ * Submit player's number (0-999999)
  */
 export async function POST(
   request: NextRequest,
@@ -30,25 +30,27 @@ export async function POST(
     const body = await request.json()
     const user = getCurrentUser()
 
-    if (!body.code) {
+    // Validate number
+    const playerNumber = Number(body.number)
+    
+    if (isNaN(playerNumber) || !Number.isInteger(playerNumber)) {
       return NextResponse.json(
-        { success: false, error: 'Code is required' },
+        { success: false, error: 'Number must be an integer' },
         { status: 400 }
       )
     }
 
-    // Validate code format
-    if (!/^\d{6}$/.test(body.code)) {
+    if (playerNumber < 0 || playerNumber > 999999) {
       return NextResponse.json(
-        { success: false, error: 'Code must be exactly 6 digits' },
+        { success: false, error: 'Number must be between 0 and 999,999' },
         { status: 400 }
       )
     }
 
-    const result = await DuelGameService.submitPlayerCode(
+    const result = await DuelGameService.submitPlayerNumber(
       params.gameId,
       user.id,
-      body.code
+      playerNumber
     )
 
     if (!result.success) {
@@ -101,4 +103,3 @@ export async function GET(
     )
   }
 }
-
