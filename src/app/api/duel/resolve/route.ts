@@ -1,13 +1,21 @@
 /**
  * Duel Resolution API
- * POST /api/duel/resolve - Resolve a duel round and determine winner
+ * POST /api/duel/resolve - Resolve a duel round with player numbers
+ * 
+ * МЕХАНИКА:
+ * - Оба игрока ввели свои числа (0-999,999)
+ * - Алгоритм генерирует случайное число
+ * - Побеждает тот, чьё число ближе к случайному
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { 
   determineWinner, 
   calculateTimeSlot,
-  WinnerDeterminationParams 
+  validatePlayerNumber,
+  DuelRoundParams,
+  MAX_NUMBER,
+  MIN_NUMBER,
 } from '@/server/services/winnerDetermination'
 
 export async function POST(request: NextRequest) {
@@ -15,9 +23,32 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
 
     // Validate required fields
-    if (!body.duelId || !body.roundNumber || !body.playerAId || !body.playerBId) {
+    const requiredFields = ['duelId', 'roundNumber', 'playerAId', 'playerBId', 'playerANumber', 'playerBNumber']
+    for (const field of requiredFields) {
+      if (body[field] === undefined || body[field] === null) {
+        return NextResponse.json(
+          { success: false, error: `Missing required field: ${field}` },
+          { status: 400 }
+        )
+      }
+    }
+
+    // Validate player numbers
+    const playerANumber = Number(body.playerANumber)
+    const playerBNumber = Number(body.playerBNumber)
+
+    const validationA = validatePlayerNumber(playerANumber)
+    if (!validationA.valid) {
       return NextResponse.json(
-        { success: false, error: 'Missing required fields: duelId, roundNumber, playerAId, playerBId' },
+        { success: false, error: `Player A: ${validationA.error}` },
+        { status: 400 }
+      )
+    }
+
+    const validationB = validatePlayerNumber(playerBNumber)
+    if (!validationB.valid) {
+      return NextResponse.json(
+        { success: false, error: `Player B: ${validationB.error}` },
         { status: 400 }
       )
     }
@@ -26,11 +57,18 @@ export async function POST(request: NextRequest) {
     const timeSlot = calculateTimeSlot()
 
     // Determine winner
-    const params: WinnerDeterminationParams = {
+    const params: DuelRoundParams = {
       duelId: body.duelId,
       roundNumber: body.roundNumber,
       timeSlot,
-      players: [body.playerAId, body.playerBId],
+      playerA: {
+        playerId: body.playerAId,
+        playerNumber: playerANumber,
+      },
+      playerB: {
+        playerId: body.playerBId,
+        playerNumber: playerBNumber,
+      },
     }
 
     const result = determineWinner(params)
@@ -38,17 +76,25 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       data: {
+        randomNumber: result.randomNumber,
+        playerA: {
+          id: body.playerAId,
+          number: result.playerANumber,
+          distance: result.distanceA,
+        },
+        playerB: {
+          id: body.playerBId,
+          number: result.playerBNumber,
+          distance: result.distanceB,
+        },
         winnerId: result.winnerId,
         loserId: result.loserId,
         winnerIndex: result.winnerIndex,
-        verification: {
-          duelId: result.verificationData.duelId,
-          roundNumber: result.verificationData.roundNumber,
-          timeSlot: result.verificationData.timeSlot,
-          players: result.verificationData.players,
-          seedSlice: result.verificationData.seedSlice,
-          winnerIndex: result.verificationData.winnerIndex,
-          formula: result.verificationData.formula,
+        isDraw: result.isDraw,
+        verification: result.verification,
+        config: {
+          minNumber: MIN_NUMBER,
+          maxNumber: MAX_NUMBER,
         },
       },
     })
@@ -60,4 +106,3 @@ export async function POST(request: NextRequest) {
     )
   }
 }
-

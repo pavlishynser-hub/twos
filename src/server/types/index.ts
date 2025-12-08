@@ -141,24 +141,26 @@ export interface DuelGameDto {
   createdAt: string
   completedAt?: string | null
   
-  // Provably fair data (revealed after game)
+  // Provably fair data (HMAC-SHA256)
   fairnessProof?: FairnessProof | null
 }
 
 export interface FairnessProof {
-  serverSeedHash: string
-  serverSecretSeed?: string // Only revealed after game
-  roundNonce: string
-  externalRandom?: string
-  randomNumber?: number
+  /** Time slot used for calculation */
+  timeSlot: number
+  /** First 8 hex chars of HMAC */
+  seedSlice: string
+  /** Winner index (0 or 1) */
+  winnerIndex: 0 | 1
+  /** Verification formula */
+  formula: string
 }
 
 /**
- * Game result submission
+ * Game result submission (auto-resolved, no player input needed)
  */
 export interface SubmitGameResultRequest {
-  playerACode?: string  // TOTP code from player A
-  playerBCode?: string  // TOTP code from player B
+  // Empty - winner is determined automatically by HMAC-SHA256
 }
 
 export interface SubmitGameResultResponse {
@@ -212,20 +214,22 @@ export interface RewardSummary {
 }
 
 // ============================================
-// RANDOMNESS ENGINE
+// WINNER DETERMINATION (HMAC-SHA256)
 // ============================================
 
-export interface RandomSource {
-  serverSecretSeed: string   // Revealed after the round
-  serverSeedHash: string     // Published before the round
-  roundNonce: string         // Unique per game (orderId + gameIndex)
-  externalRandom: string     // External randomness (blockchain hash / VRF)
+export interface WinnerDeterminationInput {
+  duelId: string
+  roundNumber: number
+  timeSlot: number
+  players: [string, string]
 }
 
-export interface RandomnessResult {
-  source: RandomSource
-  randomNumber: number
-  modulo: number
+export interface WinnerDeterminationResult {
+  winnerId: string
+  loserId: string
+  winnerIndex: 0 | 1
+  seedSlice: string
+  formula: string
 }
 
 // ============================================
@@ -273,8 +277,8 @@ export const CONSTANTS = {
   // Game timeout
   GAME_TIMEOUT_MS: 5 * 60 * 1000, // 5 minutes
   
-  // TOTP input window
-  TOTP_INPUT_WINDOW_MS: 10 * 1000, // 10 seconds
+  // Time slot duration (for HMAC seed)
+  TIME_SLOT_DURATION_MS: 30 * 1000, // 30 seconds
   
   // Minimum games required
   MIN_GAMES_REQUIRED: 2,
@@ -285,4 +289,3 @@ export const CONSTANTS = {
   // Maximum games planned
   MAX_GAMES_PLANNED: 10,
 } as const
-

@@ -16,16 +16,23 @@ function VerifyContent() {
   const roundNumber = searchParams.get('round') || ''
   const timeSlot = searchParams.get('timeSlot') || ''
   const playerA = searchParams.get('playerA') || ''
+  const playerANumber = searchParams.get('playerANumber') || ''
   const playerB = searchParams.get('playerB') || ''
+  const playerBNumber = searchParams.get('playerBNumber') || ''
   const seedSlice = searchParams.get('seedSlice') || ''
-  const winnerIndex = searchParams.get('winner') || ''
+  const randomNumber = searchParams.get('random') || ''
 
   // Calculate verification manually (client-side)
-  const seedNumber = seedSlice ? parseInt(seedSlice, 16) : 0
-  const calculatedWinnerIndex = seedNumber % 2
+  const seedNum = seedSlice ? parseInt(seedSlice, 16) : 0
+  const calculatedRandomNumber = seedNum % 1000000
+  const numA = parseInt(playerANumber) || 0
+  const numB = parseInt(playerBNumber) || 0
+  const distanceA = Math.abs(numA - calculatedRandomNumber)
+  const distanceB = Math.abs(numB - calculatedRandomNumber)
+  const calculatedWinnerIndex = distanceA < distanceB ? 0 : distanceB < distanceA ? 1 : -1
 
   const handleVerify = async () => {
-    if (!seedSlice || winnerIndex === '') {
+    if (!seedSlice) {
       setVerificationStatus('pending')
       return
     }
@@ -35,22 +42,22 @@ function VerifyContent() {
     // Simulate verification delay for UX
     await new Promise(resolve => setTimeout(resolve, 1500))
     
-    // Client-side verification (no server call needed for basic check)
-    const expectedWinner = parseInt(seedSlice, 16) % 2
-    const isValid = expectedWinner === parseInt(winnerIndex)
+    // Client-side verification
+    const expectedRandom = parseInt(seedSlice, 16) % 1000000
+    const isRandomValid = randomNumber ? parseInt(randomNumber) === expectedRandom : true
     
-    setVerificationStatus(isValid ? 'verified' : 'failed')
-    if (!isValid) {
-      setErrorMessage(`Expected winner index ${expectedWinner}, but got ${winnerIndex}`)
+    setVerificationStatus(isRandomValid ? 'verified' : 'failed')
+    if (!isRandomValid) {
+      setErrorMessage(`Expected random ${expectedRandom}, but got ${randomNumber}`)
     }
     setIsVerifying(false)
   }
 
   useEffect(() => {
-    if (seedSlice && winnerIndex !== '') {
+    if (seedSlice) {
       handleVerify()
     }
-  }, [seedSlice, winnerIndex])
+  }, [seedSlice])
 
   return (
     <div className="min-h-screen pb-24 md:pb-8">
@@ -99,44 +106,109 @@ function VerifyContent() {
           )}
         </div>
 
-        {/* Duel Data */}
+        {/* Game Mechanic Explanation */}
         <div className="card-base mb-6">
-          <h2 className="text-lg font-semibold text-white mb-4">Duel Parameters</h2>
-          
+          <h2 className="text-lg font-semibold text-white mb-4">🎮 How It Works</h2>
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="p-3 bg-dark-700 rounded-xl">
-                <p className="text-xs text-gray-400 mb-1">Duel ID</p>
-                <p className="font-mono text-sm text-white truncate">{duelId || '-'}</p>
+            <div className="flex items-start gap-4">
+              <div className="w-8 h-8 rounded-full bg-accent-primary/20 flex items-center justify-center flex-shrink-0">
+                <span className="text-sm font-bold text-accent-primary">1</span>
               </div>
-              <div className="p-3 bg-dark-700 rounded-xl">
-                <p className="text-xs text-gray-400 mb-1">Round</p>
-                <p className="font-mono text-sm text-white">{roundNumber || '-'}</p>
+              <div>
+                <p className="font-medium text-white">Players Choose Numbers</p>
+                <p className="text-sm text-gray-400">Both players pick a number from 0 to 999,999</p>
               </div>
             </div>
-
-            <div className="p-3 bg-dark-700 rounded-xl">
-              <p className="text-xs text-gray-400 mb-1">Time Slot</p>
-              <p className="font-mono text-sm text-white">{timeSlot || '-'}</p>
-              {timeSlot && (
-                <p className="text-xs text-gray-500 mt-1">
-                  ≈ {new Date(parseInt(timeSlot) * 30000).toISOString()}
-                </p>
-              )}
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="p-3 bg-dark-700 rounded-xl">
-                <p className="text-xs text-gray-400 mb-1">Player A</p>
-                <p className="font-mono text-sm text-white truncate">{playerA || '-'}</p>
+            <div className="flex items-start gap-4">
+              <div className="w-8 h-8 rounded-full bg-accent-primary/20 flex items-center justify-center flex-shrink-0">
+                <span className="text-sm font-bold text-accent-primary">2</span>
               </div>
-              <div className="p-3 bg-dark-700 rounded-xl">
-                <p className="text-xs text-gray-400 mb-1">Player B</p>
-                <p className="font-mono text-sm text-white truncate">{playerB || '-'}</p>
+              <div>
+                <p className="font-medium text-white">Random Number Generated</p>
+                <p className="text-sm text-gray-400">A provably fair random number is generated using HMAC-SHA256</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-4">
+              <div className="w-8 h-8 rounded-full bg-accent-success/20 flex items-center justify-center flex-shrink-0">
+                <span className="text-sm font-bold text-accent-success">3</span>
+              </div>
+              <div>
+                <p className="font-medium text-white">Closest Number Wins!</p>
+                <p className="text-sm text-gray-400">The player whose number is closer to the random number wins</p>
               </div>
             </div>
           </div>
         </div>
+
+        {/* Duel Data */}
+        {seedSlice && (
+          <div className="card-base mb-6">
+            <h2 className="text-lg font-semibold text-white mb-4">Duel Parameters</h2>
+            
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-3 bg-dark-700 rounded-xl">
+                  <p className="text-xs text-gray-400 mb-1">Duel ID</p>
+                  <p className="font-mono text-sm text-white truncate">{duelId || '-'}</p>
+                </div>
+                <div className="p-3 bg-dark-700 rounded-xl">
+                  <p className="text-xs text-gray-400 mb-1">Round</p>
+                  <p className="font-mono text-sm text-white">{roundNumber || '-'}</p>
+                </div>
+              </div>
+
+              {/* Players */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className={clsx(
+                  'p-3 rounded-xl',
+                  calculatedWinnerIndex === 0 ? 'bg-accent-success/10 border border-accent-success/30' : 'bg-dark-700'
+                )}>
+                  <p className="text-xs text-gray-400 mb-1">Player A</p>
+                  <p className="font-mono text-sm text-white truncate">{playerA || '-'}</p>
+                  <p className="font-mono text-xl font-bold text-accent-primary mt-1">
+                    {numA.toLocaleString()}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Distance: <span className="text-white">{distanceA.toLocaleString()}</span>
+                  </p>
+                  {calculatedWinnerIndex === 0 && (
+                    <span className="inline-block mt-2 text-xs text-accent-success font-bold">🏆 WINNER</span>
+                  )}
+                </div>
+                <div className={clsx(
+                  'p-3 rounded-xl',
+                  calculatedWinnerIndex === 1 ? 'bg-accent-success/10 border border-accent-success/30' : 'bg-dark-700'
+                )}>
+                  <p className="text-xs text-gray-400 mb-1">Player B</p>
+                  <p className="font-mono text-sm text-white truncate">{playerB || '-'}</p>
+                  <p className="font-mono text-xl font-bold text-accent-danger mt-1">
+                    {numB.toLocaleString()}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Distance: <span className="text-white">{distanceB.toLocaleString()}</span>
+                  </p>
+                  {calculatedWinnerIndex === 1 && (
+                    <span className="inline-block mt-2 text-xs text-accent-success font-bold">🏆 WINNER</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Random Number */}
+              <div className="p-4 bg-accent-warning/10 border border-accent-warning/30 rounded-xl text-center">
+                <p className="text-xs text-gray-400 mb-2">🎲 Random Number</p>
+                <p className="text-4xl font-bold font-mono text-accent-warning">
+                  {calculatedRandomNumber.toLocaleString()}
+                </p>
+              </div>
+
+              {calculatedWinnerIndex === -1 && (
+                <div className="p-3 bg-accent-warning/10 border border-accent-warning/30 rounded-xl text-center">
+                  <span className="text-accent-warning font-bold">🤝 DRAW - Equal Distance!</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Verification Formula */}
         <div className="card-base mb-6">
@@ -148,8 +220,8 @@ function VerifyContent() {
               <p className="text-xs text-gray-400 mb-2">Step 1: Build Seed Input</p>
               <code className="text-xs text-accent-primary break-all">
                 {duelId && playerA && playerB 
-                  ? `"${duelId}:${roundNumber}:${timeSlot}:${playerA}:${playerB}"`
-                  : '"duelId:roundNumber:timeSlot:playerA:playerB"'
+                  ? `"${duelId}:${roundNumber}:${timeSlot}:${playerA}:${playerANumber}:${playerB}:${playerBNumber}"`
+                  : '"duelId:round:timeSlot:playerA:numberA:playerB:numberB"'
                 }
               </code>
             </div>
@@ -165,108 +237,48 @@ function VerifyContent() {
             {/* Step 3: Seed Slice */}
             <div className="p-4 bg-dark-700 rounded-xl">
               <p className="text-xs text-gray-400 mb-2">Step 3: Extract Seed Slice (first 8 hex chars)</p>
-              <code className="text-xl text-accent-warning font-mono">
+              <code className="text-2xl text-accent-warning font-mono">
                 {seedSlice || '????????'}
               </code>
             </div>
 
-            {/* Step 4: Calculate Winner */}
+            {/* Step 4: Random Number */}
             <div className="p-4 bg-dark-700 rounded-xl">
-              <p className="text-xs text-gray-400 mb-2">Step 4: Determine Winner</p>
+              <p className="text-xs text-gray-400 mb-2">Step 4: Calculate Random Number</p>
               <div className="space-y-2">
                 <p className="text-sm text-gray-300">
-                  Seed as number: <span className="text-white font-mono">{seedSlice ? seedNumber.toLocaleString() : '-'}</span>
+                  Hex to decimal: <span className="text-white font-mono">{seedSlice ? seedNum.toLocaleString() : '-'}</span>
                 </p>
                 <p className="text-sm text-gray-300">
-                  {seedSlice ? seedNumber.toLocaleString() : 'seedNumber'} % 2 = <span className="text-accent-primary font-bold">{seedSlice ? calculatedWinnerIndex : '?'}</span>
+                  <span className="font-mono">{seedSlice ? seedNum.toLocaleString() : 'number'}</span> % 1,000,000 = 
+                  <span className="text-accent-warning font-bold ml-2">{seedSlice ? calculatedRandomNumber.toLocaleString() : '?'}</span>
+                </p>
+              </div>
+            </div>
+
+            {/* Step 5: Determine Winner */}
+            <div className="p-4 bg-dark-700 rounded-xl">
+              <p className="text-xs text-gray-400 mb-2">Step 5: Compare Distances</p>
+              <div className="space-y-2">
+                <p className="text-sm text-gray-300">
+                  Distance A: |{numA.toLocaleString()} - {calculatedRandomNumber.toLocaleString()}| = 
+                  <span className="text-accent-primary font-bold ml-2">{distanceA.toLocaleString()}</span>
                 </p>
                 <p className="text-sm text-gray-300">
+                  Distance B: |{numB.toLocaleString()} - {calculatedRandomNumber.toLocaleString()}| = 
+                  <span className="text-accent-danger font-bold ml-2">{distanceB.toLocaleString()}</span>
+                </p>
+                <p className="text-sm mt-2">
                   Winner: <span className={clsx(
                     'font-bold',
-                    calculatedWinnerIndex === 0 ? 'text-blue-400' : 'text-orange-400'
+                    calculatedWinnerIndex === 0 ? 'text-accent-success' :
+                    calculatedWinnerIndex === 1 ? 'text-accent-success' :
+                    'text-accent-warning'
                   )}>
-                    {seedSlice ? (calculatedWinnerIndex === 0 ? 'Player A' : 'Player B') : '-'}
+                    {calculatedWinnerIndex === 0 ? 'Player A (closer)' : 
+                     calculatedWinnerIndex === 1 ? 'Player B (closer)' : 
+                     'Draw (equal distance)'}
                   </span>
-                </p>
-              </div>
-            </div>
-
-            {/* Result */}
-            <div className={clsx(
-              'p-4 rounded-xl',
-              winnerIndex === '0' ? 'bg-blue-500/10 border border-blue-500/30' :
-              winnerIndex === '1' ? 'bg-orange-500/10 border border-orange-500/30' :
-              'bg-dark-700'
-            )}>
-              <p className="text-xs text-gray-400 mb-2">Result</p>
-              <p className="text-lg font-bold">
-                {winnerIndex !== '' ? (
-                  <>
-                    🏆 Winner: {winnerIndex === '0' ? 'Player A' : 'Player B'}
-                    <span className="text-sm font-normal text-gray-400 ml-2">
-                      (index: {winnerIndex})
-                    </span>
-                  </>
-                ) : (
-                  <span className="text-gray-500">No result data</span>
-                )}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* How It Works */}
-        <div className="card-base mb-6">
-          <h2 className="text-lg font-semibold text-white mb-4">How It Works</h2>
-          
-          <div className="space-y-4 text-sm">
-            <div className="flex gap-4">
-              <div className="w-8 h-8 rounded-full bg-accent-primary/20 flex items-center justify-center flex-shrink-0">
-                <span className="text-sm font-bold text-accent-primary">1</span>
-              </div>
-              <div>
-                <p className="font-medium text-white">Deterministic Input</p>
-                <p className="text-gray-400">
-                  All parameters (duel ID, round, time, players) are combined into a seed string.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex gap-4">
-              <div className="w-8 h-8 rounded-full bg-accent-primary/20 flex items-center justify-center flex-shrink-0">
-                <span className="text-sm font-bold text-accent-primary">2</span>
-              </div>
-              <div>
-                <p className="font-medium text-white">HMAC-SHA256</p>
-                <p className="text-gray-400">
-                  The seed is hashed with the platform secret using HMAC-SHA256.
-                  This is deterministic — same input always gives same output.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex gap-4">
-              <div className="w-8 h-8 rounded-full bg-accent-primary/20 flex items-center justify-center flex-shrink-0">
-                <span className="text-sm font-bold text-accent-primary">3</span>
-              </div>
-              <div>
-                <p className="font-medium text-white">Winner Selection</p>
-                <p className="text-gray-400">
-                  First 8 hex characters are converted to a number, then <code>% 2</code> gives 0 or 1.
-                  This ensures a fair 50/50 distribution.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex gap-4">
-              <div className="w-8 h-8 rounded-full bg-accent-success/20 flex items-center justify-center flex-shrink-0">
-                <span className="text-sm font-bold text-accent-success">4</span>
-              </div>
-              <div>
-                <p className="font-medium text-white">Verification</p>
-                <p className="text-gray-400">
-                  Anyone can verify that seedSlice % 2 equals the claimed winner.
-                  The formula is public and unchangeable.
                 </p>
               </div>
             </div>
@@ -283,16 +295,16 @@ function VerifyContent() {
               <p className="font-mono text-white">HMAC-SHA256</p>
             </div>
             <div className="p-3 bg-dark-700 rounded-xl">
+              <p className="text-gray-400">Number Range</p>
+              <p className="font-mono text-white">0 — 999,999</p>
+            </div>
+            <div className="p-3 bg-dark-700 rounded-xl">
               <p className="text-gray-400">Seed Slice Size</p>
-              <p className="font-mono text-white">8 hex chars (32 bits)</p>
+              <p className="font-mono text-white">8 hex chars</p>
             </div>
             <div className="p-3 bg-dark-700 rounded-xl">
-              <p className="text-gray-400">Time Slot Duration</p>
-              <p className="font-mono text-white">30 seconds</p>
-            </div>
-            <div className="p-3 bg-dark-700 rounded-xl">
-              <p className="text-gray-400">Winner Formula</p>
-              <p className="font-mono text-white">seedNumber % 2</p>
+              <p className="text-gray-400">Winner Rule</p>
+              <p className="font-mono text-white">Closest wins</p>
             </div>
           </div>
         </div>

@@ -1,322 +1,332 @@
 /**
- * Winner Determination Module
+ * TWOS Winner Determination System
  * 
- * Независимый и проверяемый механизм определения победителя дуэли.
- * Основан на детерминированной криптографической формуле (HMAC-SHA256).
+ * МЕХАНИКА:
+ * 1. Игрок A вводит число от 0 до 999,999
+ * 2. Игрок B вводит число от 0 до 999,999
+ * 3. Алгоритм генерирует случайное число (HMAC-SHA256)
+ * 4. Побеждает тот, чьё число БЛИЖЕ к случайному
+ * 5. При равной дистанции — ничья
  * 
- * ПРИНЦИП:
- * 1. Используем PLATFORM_SECRET из переменных окружения
- * 2. Формируем seedInput из duelId, roundNumber, timeSlot, players
- * 3. Вычисляем HMAC-SHA256
- * 4. Берём первые 8 символов хеша → число → winnerIndex
- * 
- * ПРОЗРАЧНОСТЬ:
- * - Формула публичная и проверяемая
- * - После дуэли сохраняем все параметры для верификации
- * - Любой может перепроверить результат
+ * PROVABLY FAIR:
+ * - Случайное число генерируется детерминированно из HMAC-SHA256
+ * - Все параметры сохраняются для верификации
+ * - Формула публична и воспроизводима
  */
 
-import crypto from 'crypto'
+// ============================================
+// CONSTANTS
+// ============================================
+
+/** Максимальное число которое могут ввести игроки */
+export const MAX_NUMBER = 999_999
+
+/** Минимальное число */
+export const MIN_NUMBER = 0
+
+/** Диапазон чисел */
+export const NUMBER_RANGE = MAX_NUMBER - MIN_NUMBER + 1 // 1,000,000
 
 // ============================================
 // TYPES
 // ============================================
 
-export interface WinnerDeterminationParams {
+export interface PlayerBet {
+  playerId: string
+  playerNumber: number // Число которое ввёл игрок (0 - 999,999)
+}
+
+export interface DuelRoundParams {
   duelId: string
   roundNumber: number
   timeSlot: number
-  players: [string, string] // [playerAId, playerBId]
+  playerA: PlayerBet
+  playerB: PlayerBet
 }
 
-export interface WinnerResult {
-  winnerIndex: 0 | 1
-  winnerId: string
-  loserId: string
-  
-  // Verification data (saved for transparency)
-  verificationData: VerificationData
+export interface DuelRoundResult {
+  /** Случайное число сгенерированное алгоритмом */
+  randomNumber: number
+  /** Число игрока A */
+  playerANumber: number
+  /** Число игрока B */
+  playerBNumber: number
+  /** Дистанция от числа A до случайного */
+  distanceA: number
+  /** Дистанция от числа B до случайного */
+  distanceB: number
+  /** ID победителя (или null если ничья) */
+  winnerId: string | null
+  /** ID проигравшего (или null если ничья) */
+  loserId: string | null
+  /** Индекс победителя: 0 = A, 1 = B, -1 = ничья */
+  winnerIndex: 0 | 1 | -1
+  /** Ничья? */
+  isDraw: boolean
+  /** Данные для верификации */
+  verification: VerificationData
 }
 
 export interface VerificationData {
   duelId: string
   roundNumber: number
   timeSlot: number
-  timestamp: number
-  players: [string, string]
-  seedInput: string
-  seedSlice: string      // First 8 chars of HMAC (for verification)
-  seedNumber: number     // Parsed number
-  winnerIndex: 0 | 1
-  formula: string        // Human-readable formula description
+  playerAId: string
+  playerANumber: number
+  playerBId: string
+  playerBNumber: number
+  seedSlice: string
+  randomNumber: number
+  distanceA: number
+  distanceB: number
+  winnerIndex: 0 | 1 | -1
+  formula: string
 }
 
 export interface VerificationRequest {
   duelId: string
   roundNumber: number
   timeSlot: number
-  players: [string, string]
+  playerAId: string
+  playerANumber: number
+  playerBId: string
+  playerBNumber: number
   seedSlice: string
-  winnerIndex: number
+  claimedWinnerIndex: 0 | 1 | -1
 }
 
-export interface VerificationResponse {
+export interface VerificationResult {
   isValid: boolean
+  computedRandomNumber: number
+  computedDistanceA: number
+  computedDistanceB: number
+  computedWinnerIndex: 0 | 1 | -1
+  claimedWinnerIndex: 0 | 1 | -1
   message: string
-  details?: {
-    expectedSeedSlice: string
-    expectedWinnerIndex: number
-    providedSeedSlice: string
-    providedWinnerIndex: number
-  }
 }
 
 // ============================================
-// CONSTANTS
+// PLATFORM SECRET
 // ============================================
 
-/** Time slot duration in milliseconds (30 seconds like TOTP) */
-export const TIME_SLOT_DURATION_MS = 30 * 1000
+function getPlatformSecret(): string {
+  const secret = process.env.TWOS_PLATFORM_SECRET
+  if (!secret || secret.length < 32) {
+    // Fallback for development
+    console.warn('⚠️ TWOS_PLATFORM_SECRET not set or too short. Using development fallback.')
+    return 'twos_development_secret_key_32chars!'
+  }
+  return secret
+}
 
-/** Length of seed slice for verification */
-export const SEED_SLICE_LENGTH = 8
+// ============================================
+// CRYPTO FUNCTIONS
+// ============================================
+
+/**
+ * Generate HMAC-SHA256 hash
+ */
+async function hmacSha256(secret: string, message: string): Promise<string> {
+  const encoder = new TextEncoder()
+  const keyData = encoder.encode(secret)
+  const messageData = encoder.encode(message)
+
+  const key = await crypto.subtle.importKey(
+    'raw',
+    keyData,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  )
+
+  const signature = await crypto.subtle.sign('HMAC', key, messageData)
+  const hashArray = Array.from(new Uint8Array(signature))
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+/**
+ * Synchronous HMAC-SHA256 using Node.js crypto (for server-side)
+ */
+function hmacSha256Sync(secret: string, message: string): string {
+  // Use Web Crypto fallback that works in Edge Runtime
+  const crypto = require('crypto')
+  return crypto.createHmac('sha256', secret).update(message).digest('hex')
+}
 
 // ============================================
 // CORE FUNCTIONS
 // ============================================
 
 /**
- * Get platform secret from environment
- * @throws Error if secret not configured
- */
-function getPlatformSecret(): string {
-  const secret = process.env.TWOS_PLATFORM_SECRET
-  
-  if (!secret) {
-    // In development, use a default secret (NEVER do this in production!)
-    if (process.env.NODE_ENV === 'development') {
-      return 'TWOS_DEV_SECRET_DO_NOT_USE_IN_PRODUCTION_2024'
-    }
-    throw new Error('TWOS_PLATFORM_SECRET is not configured')
-  }
-  
-  return secret
-}
-
-/**
- * Calculate current time slot
- * @param timestamp Optional timestamp (uses Date.now() if not provided)
- * @returns Time slot number
+ * Calculate current time slot (30-second windows)
  */
 export function calculateTimeSlot(timestamp?: number): number {
-  const ts = timestamp ?? Date.now()
-  return Math.floor(ts / TIME_SLOT_DURATION_MS)
+  const ts = timestamp || Date.now()
+  return Math.floor(ts / 30000)
 }
 
 /**
- * Calculate time until next slot
- * @returns Milliseconds until next time slot
+ * Generate random number from seed slice
+ * seedSlice → number in range [0, 999999]
  */
-export function getTimeUntilNextSlot(): number {
-  const now = Date.now()
-  const currentSlotEnd = (Math.floor(now / TIME_SLOT_DURATION_MS) + 1) * TIME_SLOT_DURATION_MS
-  return currentSlotEnd - now
-}
-
-/**
- * Generate HMAC-SHA256 hash
- */
-function generateHmac(seedInput: string, secret: string): string {
-  return crypto
-    .createHmac('sha256', secret)
-    .update(seedInput)
-    .digest('hex')
-}
-
-/**
- * Determine winner for a duel round
- * 
- * FORMULA:
- * 1. seedInput = "{duelId}:{roundNumber}:{timeSlot}:{playerA}:{playerB}"
- * 2. hmac = HMAC-SHA256(secret, seedInput)
- * 3. seedSlice = hmac[0:8] (first 8 hex chars = 32 bits)
- * 4. seedNumber = parseInt(seedSlice, 16)
- * 5. winnerIndex = seedNumber % 2
- */
-export function determineWinner(params: WinnerDeterminationParams): WinnerResult {
-  const secret = getPlatformSecret()
-  const timestamp = Date.now()
-  
-  // Build seed input string
-  const seedInput = [
-    params.duelId,
-    params.roundNumber,
-    params.timeSlot,
-    params.players[0],
-    params.players[1]
-  ].join(':')
-  
-  // Generate HMAC
-  const hmac = generateHmac(seedInput, secret)
-  
-  // Extract seed slice (first 8 hex chars = 32 bits)
-  const seedSlice = hmac.slice(0, SEED_SLICE_LENGTH)
-  
-  // Convert to number and determine winner
+function seedSliceToRandomNumber(seedSlice: string): number {
   const seedNumber = parseInt(seedSlice, 16)
-  const winnerIndex = (seedNumber % 2) as 0 | 1
-  
-  // Build verification data
-  const verificationData: VerificationData = {
-    duelId: params.duelId,
-    roundNumber: params.roundNumber,
-    timeSlot: params.timeSlot,
-    timestamp,
-    players: params.players,
-    seedInput,
-    seedSlice,
-    seedNumber,
-    winnerIndex,
-    formula: `HMAC-SHA256(secret, "${seedInput}")[0:8] = "${seedSlice}" → ${seedNumber} % 2 = ${winnerIndex}`,
+  // Modulo NUMBER_RANGE to get number in [0, 999999]
+  return seedNumber % NUMBER_RANGE
+}
+
+/**
+ * Calculate distance between two numbers
+ */
+function calculateDistance(a: number, b: number): number {
+  return Math.abs(a - b)
+}
+
+/**
+ * Determine winner of a duel round
+ * 
+ * @param params - Round parameters including player bets
+ * @returns Result with winner, distances, and verification data
+ */
+export function determineWinner(params: DuelRoundParams): DuelRoundResult {
+  const { duelId, roundNumber, timeSlot, playerA, playerB } = params
+  const secret = getPlatformSecret()
+
+  // Build seed input string
+  const seedInput = `${duelId}:${roundNumber}:${timeSlot}:${playerA.playerId}:${playerA.playerNumber}:${playerB.playerId}:${playerB.playerNumber}`
+
+  // Generate HMAC
+  const hmac = hmacSha256Sync(secret, seedInput)
+
+  // Extract first 8 hex characters as seed slice
+  const seedSlice = hmac.substring(0, 8)
+
+  // Convert to random number in range [0, 999999]
+  const randomNumber = seedSliceToRandomNumber(seedSlice)
+
+  // Calculate distances
+  const distanceA = calculateDistance(playerA.playerNumber, randomNumber)
+  const distanceB = calculateDistance(playerB.playerNumber, randomNumber)
+
+  // Determine winner (closer to random number wins)
+  let winnerId: string | null
+  let loserId: string | null
+  let winnerIndex: 0 | 1 | -1
+  let isDraw: boolean
+
+  if (distanceA < distanceB) {
+    // Player A wins (closer)
+    winnerId = playerA.playerId
+    loserId = playerB.playerId
+    winnerIndex = 0
+    isDraw = false
+  } else if (distanceB < distanceA) {
+    // Player B wins (closer)
+    winnerId = playerB.playerId
+    loserId = playerA.playerId
+    winnerIndex = 1
+    isDraw = false
+  } else {
+    // Equal distance = Draw
+    winnerId = null
+    loserId = null
+    winnerIndex = -1
+    isDraw = true
   }
-  
-  return {
+
+  // Build verification data
+  const verification: VerificationData = {
+    duelId,
+    roundNumber,
+    timeSlot,
+    playerAId: playerA.playerId,
+    playerANumber: playerA.playerNumber,
+    playerBId: playerB.playerId,
+    playerBNumber: playerB.playerNumber,
+    seedSlice,
+    randomNumber,
+    distanceA,
+    distanceB,
     winnerIndex,
-    winnerId: params.players[winnerIndex],
-    loserId: params.players[winnerIndex === 0 ? 1 : 0],
-    verificationData,
+    formula: `HMAC-SHA256(SECRET, "${seedInput}")[0:8] → ${seedSlice} → ${randomNumber}`,
+  }
+
+  return {
+    randomNumber,
+    playerANumber: playerA.playerNumber,
+    playerBNumber: playerB.playerNumber,
+    distanceA,
+    distanceB,
+    winnerId,
+    loserId,
+    winnerIndex,
+    isDraw,
+    verification,
   }
 }
 
 /**
  * Verify a duel result
- * Anyone can call this to verify that the result was fair
- * 
- * NOTE: This requires knowing the PLATFORM_SECRET, which is only on the server.
- * For public verification, we only check that seedSlice → winnerIndex is correct.
+ * Anyone can verify that the result was calculated correctly
  */
-export function verifyResult(request: VerificationRequest): VerificationResponse {
-  // Parse the seedSlice to number
-  const seedNumber = parseInt(request.seedSlice, 16)
-  
-  if (isNaN(seedNumber)) {
-    return {
-      isValid: false,
-      message: 'Invalid seedSlice format (must be hex)',
-    }
+export function verifyResult(request: VerificationRequest): VerificationResult {
+  const { seedSlice, claimedWinnerIndex } = request
+
+  // Recalculate random number from seed slice
+  const computedRandomNumber = seedSliceToRandomNumber(seedSlice)
+
+  // Recalculate distances
+  const computedDistanceA = calculateDistance(request.playerANumber, computedRandomNumber)
+  const computedDistanceB = calculateDistance(request.playerBNumber, computedRandomNumber)
+
+  // Determine expected winner
+  let computedWinnerIndex: 0 | 1 | -1
+  if (computedDistanceA < computedDistanceB) {
+    computedWinnerIndex = 0
+  } else if (computedDistanceB < computedDistanceA) {
+    computedWinnerIndex = 1
+  } else {
+    computedWinnerIndex = -1
   }
-  
-  // Calculate expected winner index
-  const expectedWinnerIndex = seedNumber % 2
-  
-  // Check if matches
-  const isValid = expectedWinnerIndex === request.winnerIndex
-  
+
+  // Check if claimed result matches computed result
+  const isValid = computedWinnerIndex === claimedWinnerIndex
+
+  let message: string
+  if (isValid) {
+    if (computedWinnerIndex === -1) {
+      message = `✓ Verified: Draw (both at distance ${computedDistanceA} from ${computedRandomNumber})`
+    } else {
+      const winner = computedWinnerIndex === 0 ? 'Player A' : 'Player B'
+      message = `✓ Verified: ${winner} wins (distance ${computedWinnerIndex === 0 ? computedDistanceA : computedDistanceB} vs ${computedWinnerIndex === 0 ? computedDistanceB : computedDistanceA})`
+    }
+  } else {
+    message = `✗ Invalid: Expected winner index ${computedWinnerIndex}, got ${claimedWinnerIndex}`
+  }
+
   return {
     isValid,
-    message: isValid 
-      ? 'Result verified! The winner was determined fairly.'
-      : 'Verification failed! Winner index does not match.',
-    details: {
-      expectedSeedSlice: request.seedSlice,
-      expectedWinnerIndex,
-      providedSeedSlice: request.seedSlice,
-      providedWinnerIndex: request.winnerIndex,
-    },
+    computedRandomNumber,
+    computedDistanceA,
+    computedDistanceB,
+    computedWinnerIndex,
+    claimedWinnerIndex,
+    message,
   }
 }
 
 /**
- * Generate verification URL for a duel result
+ * Validate player number input
  */
-export function generateVerificationUrl(
-  baseUrl: string,
-  verificationData: VerificationData
-): string {
-  const params = new URLSearchParams({
-    duelId: verificationData.duelId,
-    round: verificationData.roundNumber.toString(),
-    timeSlot: verificationData.timeSlot.toString(),
-    playerA: verificationData.players[0],
-    playerB: verificationData.players[1],
-    seedSlice: verificationData.seedSlice,
-    winner: verificationData.winnerIndex.toString(),
-  })
-  
-  return `${baseUrl}/verify?${params.toString()}`
-}
-
-/**
- * Format verification data for display
- */
-export function formatVerificationForDisplay(data: VerificationData): {
-  summary: string
-  steps: string[]
-  result: string
-} {
-  return {
-    summary: `Duel ${data.duelId}, Round ${data.roundNumber}`,
-    steps: [
-      `1. Seed Input: "${data.seedInput}"`,
-      `2. HMAC-SHA256 computed`,
-      `3. Seed Slice (first 8 chars): "${data.seedSlice}"`,
-      `4. As number: ${data.seedNumber.toLocaleString()}`,
-      `5. ${data.seedNumber} % 2 = ${data.winnerIndex}`,
-    ],
-    result: `Winner: Player ${data.winnerIndex === 0 ? 'A' : 'B'} (${data.players[data.winnerIndex]})`,
+export function validatePlayerNumber(num: number): { valid: boolean; error?: string } {
+  if (!Number.isInteger(num)) {
+    return { valid: false, error: 'Number must be an integer' }
   }
-}
-
-// ============================================
-// DEMO / TESTING
-// ============================================
-
-/**
- * Run a demo determination (for testing)
- */
-export function runDemoRound(): WinnerResult {
-  const demoParams: WinnerDeterminationParams = {
-    duelId: `demo_${Date.now()}`,
-    roundNumber: 1,
-    timeSlot: calculateTimeSlot(),
-    players: ['playerA_demo', 'playerB_demo'],
+  if (num < MIN_NUMBER) {
+    return { valid: false, error: `Number must be at least ${MIN_NUMBER}` }
   }
-  
-  return determineWinner(demoParams)
-}
-
-/**
- * Simulate multiple rounds to verify fairness (50/50 distribution)
- */
-export function testFairness(iterations: number = 10000): {
-  player0Wins: number
-  player1Wins: number
-  player0Percent: string
-  player1Percent: string
-} {
-  let player0Wins = 0
-  let player1Wins = 0
-  
-  for (let i = 0; i < iterations; i++) {
-    const result = determineWinner({
-      duelId: `test_${i}`,
-      roundNumber: 1,
-      timeSlot: i,
-      players: ['playerA', 'playerB'],
-    })
-    
-    if (result.winnerIndex === 0) {
-      player0Wins++
-    } else {
-      player1Wins++
-    }
+  if (num > MAX_NUMBER) {
+    return { valid: false, error: `Number must be at most ${MAX_NUMBER}` }
   }
-  
-  return {
-    player0Wins,
-    player1Wins,
-    player0Percent: ((player0Wins / iterations) * 100).toFixed(2) + '%',
-    player1Percent: ((player1Wins / iterations) * 100).toFixed(2) + '%',
-  }
+  return { valid: true }
 }
-

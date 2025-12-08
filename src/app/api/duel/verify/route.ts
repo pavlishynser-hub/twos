@@ -11,25 +11,32 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
 
     // Validate required fields
-    if (!body.duelId || body.roundNumber === undefined || 
-        body.timeSlot === undefined || !body.players || 
-        !body.seedSlice || body.winnerIndex === undefined) {
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: 'Missing required fields: duelId, roundNumber, timeSlot, players, seedSlice, winnerIndex' 
-        },
-        { status: 400 }
-      )
+    const requiredFields = [
+      'duelId', 'roundNumber', 'timeSlot', 
+      'playerAId', 'playerANumber', 
+      'playerBId', 'playerBNumber',
+      'seedSlice', 'claimedWinnerIndex'
+    ]
+    
+    for (const field of requiredFields) {
+      if (body[field] === undefined || body[field] === null) {
+        return NextResponse.json(
+          { success: false, error: `Missing required field: ${field}` },
+          { status: 400 }
+        )
+      }
     }
 
     const verificationRequest: VerificationRequest = {
       duelId: body.duelId,
       roundNumber: body.roundNumber,
       timeSlot: body.timeSlot,
-      players: body.players,
+      playerAId: body.playerAId,
+      playerANumber: Number(body.playerANumber),
+      playerBId: body.playerBId,
+      playerBNumber: Number(body.playerBNumber),
       seedSlice: body.seedSlice,
-      winnerIndex: body.winnerIndex,
+      claimedWinnerIndex: body.claimedWinnerIndex,
     }
 
     const result = verifyResult(verificationRequest)
@@ -46,4 +53,3 @@ export async function POST(request: NextRequest) {
     )
   }
 }
-

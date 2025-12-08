@@ -4,30 +4,47 @@ import { useState, useEffect } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { clsx } from 'clsx'
 import Link from 'next/link'
+import { NumberInput } from '@/components/NumberInput'
 
-type DuelPhase = 'loading' | 'ready' | 'countdown' | 'resolving' | 'result'
+type DuelPhase = 'loading' | 'input' | 'waiting' | 'countdown' | 'resolving' | 'result'
 
-interface VerificationData {
-  duelId: string
-  roundNumber: number
-  timeSlot: number
-  players: [string, string]
-  seedSlice: string
-  winnerIndex: 0 | 1
-  formula: string
+interface PlayerState {
+  id: string
+  username: string
+  avatar: string
+  number: number | null
+  distance: number | null
+  isReady: boolean
 }
 
-interface DuelResult {
-  winnerId: string
-  loserId: string
-  winnerIndex: 0 | 1
-  verification: VerificationData
+interface RoundResult {
+  randomNumber: number
+  winnerId: string | null
+  isDraw: boolean
+  verification: {
+    seedSlice: string
+    timeSlot: number
+    formula: string
+  }
 }
 
 // Mock players
-const mockPlayers = {
-  me: { id: 'user_me', username: 'You', avatar: '👤' },
-  opponent: { id: 'user_opponent', username: 'ShadowKing', avatar: '🎭' },
+const mockMe: PlayerState = {
+  id: 'user_me',
+  username: 'You',
+  avatar: '👤',
+  number: null,
+  distance: null,
+  isReady: false,
+}
+
+const mockOpponent: PlayerState = {
+  id: 'user_opponent',
+  username: 'ShadowKing',
+  avatar: '🎭',
+  number: null,
+  distance: null,
+  isReady: false,
 }
 
 export default function DuelPage() {
@@ -38,21 +55,50 @@ export default function DuelPage() {
   const [phase, setPhase] = useState<DuelPhase>('loading')
   const [countdown, setCountdown] = useState(3)
   const [currentRound, setCurrentRound] = useState(1)
-  const [totalRounds] = useState(3) // Mock: 3 rounds
-  const [result, setResult] = useState<DuelResult | null>(null)
+  const [totalRounds] = useState(3)
+  
+  const [me, setMe] = useState<PlayerState>(mockMe)
+  const [opponent, setOpponent] = useState<PlayerState>(mockOpponent)
+  const [result, setResult] = useState<RoundResult | null>(null)
+  
   const [scores, setScores] = useState({ me: 0, opponent: 0 })
-  const [roundHistory, setRoundHistory] = useState<Array<{ round: number; winner: 'me' | 'opponent' }>>([])
+  const [roundHistory, setRoundHistory] = useState<Array<{ 
+    round: number
+    winner: 'me' | 'opponent' | 'draw'
+    myNumber: number
+    opponentNumber: number
+    randomNumber: number
+  }>>([])
 
   // Initialize duel
   useEffect(() => {
-    const timer = setTimeout(() => setPhase('ready'), 1500)
+    const timer = setTimeout(() => setPhase('input'), 1500)
     return () => clearTimeout(timer)
   }, [])
 
-  // Start duel
-  const handleStartRound = () => {
-    setPhase('countdown')
-    setCountdown(3)
+  // Handle my number change
+  const handleMyNumberChange = (num: number | null) => {
+    setMe(prev => ({ ...prev, number: num }))
+  }
+
+  // Submit my number and wait for opponent
+  const handleSubmitNumber = () => {
+    if (me.number === null) return
+    
+    setMe(prev => ({ ...prev, isReady: true }))
+    setPhase('waiting')
+    
+    // Simulate opponent submitting (random number between 0-999999)
+    setTimeout(() => {
+      const opponentNumber = Math.floor(Math.random() * 1000000)
+      setOpponent(prev => ({ ...prev, number: opponentNumber, isReady: true }))
+      
+      // Start countdown
+      setTimeout(() => {
+        setPhase('countdown')
+        setCountdown(3)
+      }, 500)
+    }, 1500 + Math.random() * 2000)
   }
 
   // Countdown
@@ -69,7 +115,7 @@ export default function DuelPage() {
     return () => clearTimeout(timer)
   }, [phase, countdown])
 
-  // Resolve duel using new system
+  // Resolve duel
   const resolveDuel = async () => {
     try {
       const response = await fetch('/api/duel/resolve', {
@@ -78,54 +124,99 @@ export default function DuelPage() {
         body: JSON.stringify({
           duelId: `${duelId}_round_${currentRound}`,
           roundNumber: currentRound,
-          playerAId: mockPlayers.me.id,
-          playerBId: mockPlayers.opponent.id,
+          playerAId: me.id,
+          playerBId: opponent.id,
+          playerANumber: me.number,
+          playerBNumber: opponent.number,
         }),
       })
 
       const data = await response.json()
 
       if (data.success) {
-        const winnerIsMe = data.data.winnerIndex === 0
+        const { randomNumber, playerA, playerB, winnerId, isDraw, verification } = data.data
         
-        setResult(data.data)
-        setScores(prev => ({
-          me: prev.me + (winnerIsMe ? 1 : 0),
-          opponent: prev.opponent + (winnerIsMe ? 0 : 1),
-        }))
-        setRoundHistory(prev => [
-          ...prev,
-          { round: currentRound, winner: winnerIsMe ? 'me' : 'opponent' }
-        ])
+        // Update distances
+        setMe(prev => ({ ...prev, distance: playerA.distance }))
+        setOpponent(prev => ({ ...prev, distance: playerB.distance }))
         
-        // Short delay then show result
+        // Set result
+        setResult({
+          randomNumber,
+          winnerId,
+          isDraw,
+          verification: {
+            seedSlice: verification.seedSlice,
+            timeSlot: verification.timeSlot,
+            formula: verification.formula,
+          },
+        })
+
+        // Update scores
+        if (!isDraw) {
+          const winnerIsMe = winnerId === me.id
+          setScores(prev => ({
+            me: prev.me + (winnerIsMe ? 1 : 0),
+            opponent: prev.opponent + (winnerIsMe ? 0 : 1),
+          }))
+          setRoundHistory(prev => [
+            ...prev,
+            {
+              round: currentRound,
+              winner: winnerIsMe ? 'me' : 'opponent',
+              myNumber: me.number!,
+              opponentNumber: opponent.number!,
+              randomNumber,
+            }
+          ])
+        } else {
+          setRoundHistory(prev => [
+            ...prev,
+            {
+              round: currentRound,
+              winner: 'draw',
+              myNumber: me.number!,
+              opponentNumber: opponent.number!,
+              randomNumber,
+            }
+          ])
+        }
+        
         setTimeout(() => setPhase('result'), 1500)
       }
     } catch (error) {
       console.error('Resolution error:', error)
-      // Fallback to client-side resolution
-      const winnerIsMe = Math.random() > 0.5
-      setScores(prev => ({
-        me: prev.me + (winnerIsMe ? 1 : 0),
-        opponent: prev.opponent + (winnerIsMe ? 0 : 1),
-      }))
-      setRoundHistory(prev => [
-        ...prev,
-        { round: currentRound, winner: winnerIsMe ? 'me' : 'opponent' }
-      ])
+      // Fallback
+      const randomNumber = Math.floor(Math.random() * 1000000)
+      const distanceMe = Math.abs(me.number! - randomNumber)
+      const distanceOpp = Math.abs(opponent.number! - randomNumber)
+      const winnerIsMe = distanceMe < distanceOpp
+      const isDraw = distanceMe === distanceOpp
+      
+      setMe(prev => ({ ...prev, distance: distanceMe }))
+      setOpponent(prev => ({ ...prev, distance: distanceOpp }))
+      
+      if (!isDraw) {
+        setScores(prev => ({
+          me: prev.me + (winnerIsMe ? 1 : 0),
+          opponent: prev.opponent + (winnerIsMe ? 0 : 1),
+        }))
+      }
+      
+      setResult({ randomNumber, winnerId: isDraw ? null : (winnerIsMe ? me.id : opponent.id), isDraw, verification: { seedSlice: 'fallback', timeSlot: 0, formula: '' } })
+      setRoundHistory(prev => [...prev, { round: currentRound, winner: isDraw ? 'draw' : (winnerIsMe ? 'me' : 'opponent'), myNumber: me.number!, opponentNumber: opponent.number!, randomNumber }])
       setTimeout(() => setPhase('result'), 1500)
     }
   }
 
   // Next round
   const handleNextRound = () => {
-    if (currentRound >= totalRounds) {
-      // Duel finished
-      return
-    }
+    if (currentRound >= totalRounds) return
     setCurrentRound(prev => prev + 1)
+    setMe(prev => ({ ...prev, number: null, distance: null, isReady: false }))
+    setOpponent(prev => ({ ...prev, number: null, distance: null, isReady: false }))
     setResult(null)
-    setPhase('ready')
+    setPhase('input')
   }
 
   // Check if duel is finished
@@ -135,8 +226,7 @@ export default function DuelPage() {
   // Generate verification URL
   const getVerificationUrl = () => {
     if (!result?.verification) return '/verify'
-    const v = result.verification
-    return `/verify?duelId=${v.duelId}&round=${v.roundNumber}&timeSlot=${v.timeSlot}&playerA=${v.players[0]}&playerB=${v.players[1]}&seedSlice=${v.seedSlice}&winner=${v.winnerIndex}`
+    return `/verify?duelId=${duelId}_round_${currentRound}&round=${currentRound}&timeSlot=${result.verification.timeSlot}&playerA=${me.id}&playerANumber=${me.number}&playerB=${opponent.id}&playerBNumber=${opponent.number}&seedSlice=${result.verification.seedSlice}&random=${result.randomNumber}`
   }
 
   return (
@@ -147,7 +237,7 @@ export default function DuelPage() {
           <div className="flex items-center gap-2 px-4 py-2 bg-accent-success/10 border border-accent-success/30 rounded-full">
             <span className="w-2 h-2 rounded-full bg-accent-success animate-pulse" />
             <span className="text-sm font-medium text-accent-success">Provably Fair</span>
-            <span className="text-xs text-gray-400">HMAC-SHA256</span>
+            <span className="text-xs text-gray-400">Closest Number Wins</span>
           </div>
         </div>
 
@@ -165,9 +255,9 @@ export default function DuelPage() {
               'w-16 h-16 rounded-2xl flex items-center justify-center text-3xl mb-2',
               'bg-gradient-to-br from-accent-primary to-accent-secondary'
             )}>
-              {mockPlayers.me.avatar}
+              {me.avatar}
             </div>
-            <p className="font-medium text-white">{mockPlayers.me.username}</p>
+            <p className="font-medium text-white">{me.username}</p>
             <p className="text-2xl font-bold text-accent-primary">{scores.me}</p>
           </div>
 
@@ -178,9 +268,9 @@ export default function DuelPage() {
               'w-16 h-16 rounded-2xl flex items-center justify-center text-3xl mb-2',
               'bg-gradient-to-br from-accent-danger to-accent-warning'
             )}>
-              {mockPlayers.opponent.avatar}
+              {opponent.avatar}
             </div>
-            <p className="font-medium text-white">{mockPlayers.opponent.username}</p>
+            <p className="font-medium text-white">{opponent.username}</p>
             <p className="text-2xl font-bold text-accent-danger">{scores.opponent}</p>
           </div>
         </div>
@@ -197,23 +287,97 @@ export default function DuelPage() {
             </div>
           )}
 
-          {/* Ready Phase */}
-          {phase === 'ready' && (
-            <div className="relative text-center py-12">
-              <div className="text-6xl mb-4">⚔️</div>
-              <h2 className="text-2xl font-bold text-white mb-2">Round {currentRound}</h2>
-              <p className="text-gray-400 mb-6">
-                Winner will be determined by cryptographic formula
+          {/* Input Phase */}
+          {phase === 'input' && (
+            <div className="relative py-8">
+              <h2 className="text-2xl font-bold text-white text-center mb-6">
+                Choose Your Number
+              </h2>
+              <p className="text-gray-400 text-center mb-8">
+                The player with the number closest to the random number wins!
               </p>
-              <button onClick={handleStartRound} className="btn-primary text-lg px-8">
-                Start Round
+              
+              <div className="grid grid-cols-2 gap-6 mb-8">
+                <NumberInput
+                  value={me.number}
+                  onChange={handleMyNumberChange}
+                  disabled={false}
+                  label="Your Number"
+                />
+                <NumberInput
+                  value={opponent.number}
+                  onChange={() => {}}
+                  disabled={true}
+                  isOpponent={true}
+                  isRevealed={false}
+                  label="Opponent's Number"
+                />
+              </div>
+              
+              <button 
+                onClick={handleSubmitNumber}
+                disabled={me.number === null}
+                className={clsx(
+                  'w-full btn-primary text-lg py-4',
+                  me.number === null && 'opacity-50 cursor-not-allowed'
+                )}
+              >
+                Lock In Number
               </button>
+            </div>
+          )}
+
+          {/* Waiting Phase */}
+          {phase === 'waiting' && (
+            <div className="relative py-8">
+              <h2 className="text-xl font-bold text-white text-center mb-6">
+                Number Locked! ✓
+              </h2>
+              
+              <div className="grid grid-cols-2 gap-6 mb-8">
+                <div className="text-center p-4 bg-accent-primary/10 rounded-xl">
+                  <p className="text-sm text-gray-400 mb-2">Your Number</p>
+                  <p className="text-3xl font-bold font-mono text-accent-primary">
+                    {me.number?.toLocaleString()}
+                  </p>
+                </div>
+                <div className="text-center p-4 bg-dark-700 rounded-xl">
+                  <p className="text-sm text-gray-400 mb-2">Opponent</p>
+                  <p className="text-3xl font-bold font-mono text-gray-500">
+                    ???,???
+                  </p>
+                </div>
+              </div>
+              
+              <div className="flex items-center justify-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-accent-warning animate-bounce" style={{ animationDelay: '0ms' }} />
+                <div className="w-3 h-3 rounded-full bg-accent-warning animate-bounce" style={{ animationDelay: '150ms' }} />
+                <div className="w-3 h-3 rounded-full bg-accent-warning animate-bounce" style={{ animationDelay: '300ms' }} />
+              </div>
+              <p className="text-gray-400 text-center mt-3">Waiting for opponent...</p>
             </div>
           )}
 
           {/* Countdown Phase */}
           {phase === 'countdown' && (
-            <div className="relative text-center py-12">
+            <div className="relative text-center py-8">
+              <h2 className="text-xl font-bold text-white mb-6">Both Numbers Locked!</h2>
+              
+              <div className="grid grid-cols-2 gap-6 mb-8">
+                <div className="text-center p-4 bg-accent-primary/10 rounded-xl">
+                  <p className="text-sm text-gray-400 mb-2">You</p>
+                  <p className="text-3xl font-bold font-mono text-accent-primary">
+                    {me.number?.toLocaleString()}
+                  </p>
+                </div>
+                <div className="text-center p-4 bg-accent-danger/10 rounded-xl">
+                  <p className="text-sm text-gray-400 mb-2">{opponent.username}</p>
+                  <p className="text-3xl font-bold font-mono text-accent-danger">
+                    {opponent.number?.toLocaleString()}
+                  </p>
+                </div>
+              </div>
+              
               <div className={clsx(
                 'w-24 h-24 mx-auto rounded-full flex items-center justify-center',
                 'bg-accent-danger text-white text-5xl font-bold',
@@ -221,7 +385,7 @@ export default function DuelPage() {
               )}>
                 {countdown}
               </div>
-              <p className="text-xl font-bold text-white mt-6">Get Ready!</p>
+              <p className="text-lg text-white mt-4">Generating random number...</p>
             </div>
           )}
 
@@ -229,43 +393,93 @@ export default function DuelPage() {
           {phase === 'resolving' && (
             <div className="relative text-center py-12">
               <div className="w-20 h-20 mx-auto mb-4 rounded-full border-4 border-accent-warning border-t-transparent animate-spin" />
-              <p className="text-xl font-bold text-accent-warning animate-pulse">Determining winner...</p>
-              <p className="text-sm text-gray-400 mt-2">Computing HMAC-SHA256</p>
+              <p className="text-xl font-bold text-accent-warning animate-pulse">Calculating...</p>
+              <p className="text-sm text-gray-400 mt-2">Finding the closest number</p>
             </div>
           )}
 
           {/* Result Phase */}
-          {phase === 'result' && (
-            <div className="relative">
-              {/* Round Result */}
-              {!isDuelFinished && (
+          {phase === 'result' && result && (
+            <div className="relative py-6">
+              {/* Random Number Reveal */}
+              <div className="text-center mb-6">
+                <p className="text-sm text-gray-400 mb-2">🎲 Random Number</p>
+                <p className="text-5xl font-bold font-mono text-accent-warning">
+                  {result.randomNumber.toLocaleString()}
+                </p>
+              </div>
+              
+              {/* Distances */}
+              <div className="grid grid-cols-2 gap-4 mb-6">
                 <div className={clsx(
-                  'text-center py-8 rounded-xl mb-6',
-                  roundHistory[roundHistory.length - 1]?.winner === 'me'
+                  'p-4 rounded-xl text-center',
+                  !result.isDraw && result.winnerId === me.id
+                    ? 'bg-accent-success/20 border border-accent-success/30'
+                    : 'bg-dark-700'
+                )}>
+                  <p className="text-sm text-gray-400">Your Number</p>
+                  <p className="text-2xl font-bold font-mono text-white">{me.number?.toLocaleString()}</p>
+                  <p className="text-sm mt-1">
+                    Distance: <span className={clsx(
+                      'font-bold',
+                      !result.isDraw && result.winnerId === me.id ? 'text-accent-success' : 'text-gray-400'
+                    )}>{me.distance?.toLocaleString()}</span>
+                  </p>
+                  {!result.isDraw && result.winnerId === me.id && (
+                    <span className="inline-block mt-2 text-sm text-accent-success font-bold">🏆 CLOSER!</span>
+                  )}
+                </div>
+                
+                <div className={clsx(
+                  'p-4 rounded-xl text-center',
+                  !result.isDraw && result.winnerId === opponent.id
+                    ? 'bg-accent-danger/20 border border-accent-danger/30'
+                    : 'bg-dark-700'
+                )}>
+                  <p className="text-sm text-gray-400">{opponent.username}</p>
+                  <p className="text-2xl font-bold font-mono text-white">{opponent.number?.toLocaleString()}</p>
+                  <p className="text-sm mt-1">
+                    Distance: <span className={clsx(
+                      'font-bold',
+                      !result.isDraw && result.winnerId === opponent.id ? 'text-accent-danger' : 'text-gray-400'
+                    )}>{opponent.distance?.toLocaleString()}</span>
+                  </p>
+                  {!result.isDraw && result.winnerId === opponent.id && (
+                    <span className="inline-block mt-2 text-sm text-accent-danger font-bold">🏆 CLOSER!</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Round Result Banner */}
+              <div className={clsx(
+                'text-center py-4 rounded-xl mb-6',
+                result.isDraw
+                  ? 'bg-accent-warning/20'
+                  : result.winnerId === me.id
                     ? 'bg-accent-success/20'
                     : 'bg-accent-danger/20'
-                )}>
-                  <p className="text-3xl font-bold mb-2">
-                    {roundHistory[roundHistory.length - 1]?.winner === 'me' 
-                      ? '🏆 You Won!' 
-                      : '😔 You Lost'}
-                  </p>
-                  <p className="text-gray-400">Round {currentRound}</p>
-                </div>
-              )}
+              )}>
+                <p className="text-3xl font-bold">
+                  {result.isDraw 
+                    ? '🤝 Draw!' 
+                    : result.winnerId === me.id 
+                      ? '🏆 You Win!' 
+                      : '😔 You Lose'}
+                </p>
+              </div>
 
-              {/* Final Result */}
+              {/* Final Result (if duel finished) */}
               {isDuelFinished && (
                 <div className={clsx(
-                  'text-center py-8 rounded-xl mb-6',
-                  finalWinner === 'me' ? 'bg-accent-success/20' :
-                  finalWinner === 'opponent' ? 'bg-accent-danger/20' :
-                  'bg-accent-warning/20'
+                  'text-center py-4 rounded-xl mb-6 border-2',
+                  finalWinner === 'me' ? 'bg-accent-success/20 border-accent-success' :
+                  finalWinner === 'opponent' ? 'bg-accent-danger/20 border-accent-danger' :
+                  'bg-accent-warning/20 border-accent-warning'
                 )}>
                   <p className="text-4xl font-bold mb-2">
-                    {finalWinner === 'me' ? '🏆 Victory!' :
-                     finalWinner === 'opponent' ? '😔 Defeat' :
-                     '🤝 Draw!'}
+                    {finalWinner === 'me' ? '🏆 VICTORY!' :
+                     finalWinner === 'opponent' ? '😔 DEFEAT' :
+                     '🤝 DRAW!'}
                   </p>
                   <p className="text-xl text-gray-400">
                     Final Score: {scores.me} - {scores.opponent}
@@ -273,59 +487,14 @@ export default function DuelPage() {
                 </div>
               )}
 
-              {/* Verification Data */}
-              {result?.verification && (
-                <div className="p-4 bg-dark-700 rounded-xl mb-6">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-sm text-gray-400">Fairness Proof</span>
-                    <span className="badge-success">Verified</span>
-                  </div>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Seed Slice</span>
-                      <code className="text-accent-primary font-mono">{result.verification.seedSlice}</code>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Winner Index</span>
-                      <code className="text-white font-mono">{result.verification.winnerIndex}</code>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Time Slot</span>
-                      <code className="text-white font-mono">{result.verification.timeSlot}</code>
-                    </div>
-                  </div>
-                  <Link 
-                    href={getVerificationUrl()}
-                    className="block mt-4 text-center text-sm text-accent-primary hover:text-accent-secondary transition-colors"
-                  >
-                    🔍 Verify this result →
-                  </Link>
-                </div>
-              )}
-
-              {/* Round History */}
-              <div className="flex justify-center gap-2 mb-6">
-                {roundHistory.map((r, i) => (
-                  <div
-                    key={i}
-                    className={clsx(
-                      'w-10 h-10 rounded-full flex items-center justify-center font-bold',
-                      r.winner === 'me' 
-                        ? 'bg-accent-success/20 text-accent-success'
-                        : 'bg-accent-danger/20 text-accent-danger'
-                    )}
-                  >
-                    {r.winner === 'me' ? '✓' : '✕'}
-                  </div>
-                ))}
-                {[...Array(totalRounds - roundHistory.length)].map((_, i) => (
-                  <div
-                    key={`empty-${i}`}
-                    className="w-10 h-10 rounded-full bg-dark-600 flex items-center justify-center text-gray-600"
-                  >
-                    ?
-                  </div>
-                ))}
+              {/* Verification Link */}
+              <div className="text-center mb-6">
+                <Link 
+                  href={getVerificationUrl()}
+                  className="text-sm text-accent-primary hover:text-accent-secondary transition-colors"
+                >
+                  🔍 Verify this result →
+                </Link>
               </div>
 
               {/* Actions */}
@@ -357,13 +526,41 @@ export default function DuelPage() {
           )}
         </div>
 
-        {/* Formula Info */}
+        {/* Round History */}
+        {roundHistory.length > 0 && (
+          <div className="mt-4 card-base">
+            <h3 className="text-sm font-semibold text-gray-400 mb-3">Round History</h3>
+            <div className="space-y-2">
+              {roundHistory.map((r, i) => (
+                <div key={i} className="flex items-center justify-between text-sm p-2 bg-dark-700 rounded-lg">
+                  <span className="text-gray-400">Round {r.round}</span>
+                  <span className="font-mono">
+                    <span className="text-accent-primary">{r.myNumber.toLocaleString()}</span>
+                    {' vs '}
+                    <span className="text-accent-danger">{r.opponentNumber.toLocaleString()}</span>
+                  </span>
+                  <span className="text-accent-warning font-mono">🎲 {r.randomNumber.toLocaleString()}</span>
+                  <span className={clsx(
+                    'font-bold',
+                    r.winner === 'me' ? 'text-accent-success' :
+                    r.winner === 'opponent' ? 'text-accent-danger' :
+                    'text-accent-warning'
+                  )}>
+                    {r.winner === 'me' ? '✓ Win' : r.winner === 'opponent' ? '✗ Loss' : '= Draw'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Info */}
         <div className="mt-4 text-center">
           <Link 
             href="/verify"
             className="text-sm text-gray-500 hover:text-gray-400 transition-colors"
           >
-            🔒 Provably Fair • HMAC-SHA256 • Click to learn more
+            🔒 Provably Fair • Closest Number Wins • Click to learn more
           </Link>
         </div>
       </div>

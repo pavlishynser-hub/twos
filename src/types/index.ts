@@ -56,59 +56,35 @@ export interface UserStats {
 }
 
 // ============================================
-// PROVABLY FAIR TYPES
+// PROVABLY FAIR TYPES (HMAC-SHA256)
 // ============================================
 
 /**
- * Fairness data attached to each duel
- * This data is used for verification
+ * Verification data for a duel round
  */
-export interface DuelFairnessData {
-  /** SHA-256 commitment hash (shown before duel starts) */
-  seedCommitment: string
-  /** Exact resolution timestamp (Unix ms) */
-  timestamp: number
-  /** TOTP code generated at resolution */
-  totpCode: number
-  /** Winner index derived from totpCode % 2 */
-  winnerIndex: 0 | 1
-  /** Algorithm description for transparency */
-  algorithm: string
-  /** Time window used for TOTP */
-  timeStep: string
-}
-
-/**
- * Extended Duel type with fairness data
- */
-export interface DuelWithFairness extends Duel {
-  fairness?: DuelFairnessData
-}
-
-/**
- * Verification request/response
- */
-export interface VerificationRequest {
+export interface DuelVerificationData {
+  /** Duel ID + round combination */
   duelId: string
-  seedCommitment: string
-  timestamp: number
-  totpCode: number
+  /** Round number */
+  roundNumber: number
+  /** Time slot (Math.floor(timestamp / 30000)) */
+  timeSlot: number
+  /** Player IDs in order [A, B] */
+  players: [string, string]
+  /** First 8 hex chars of HMAC */
+  seedSlice: string
+  /** Winner index: 0 = player A, 1 = player B */
+  winnerIndex: 0 | 1
+  /** Human-readable formula */
+  formula: string
 }
 
-export interface VerificationResponse {
-  isValid: boolean
-  message: string
-  computedWinner: 0 | 1
-  details?: {
-    commitmentVerified: boolean
-    totpVerified: boolean
-    winnerCorrect: boolean
-  }
+/**
+ * Extended Duel type with verification data
+ */
+export interface DuelWithVerification extends Duel {
+  verification?: DuelVerificationData
 }
-
-// ============================================
-// TOTP DUEL TYPES (Player Input Mechanism)
-// ============================================
 
 /**
  * Result of a duel round
@@ -116,33 +92,13 @@ export interface VerificationResponse {
 export type DuelOutcome = 'player1' | 'player2' | 'draw'
 
 /**
- * Player's TOTP submission
- */
-export interface TOTPSubmission {
-  playerId: string
-  code: string      // 6-digit code as string (preserves leading zeros)
-  codeValue: number // Numeric value for comparison
-  submittedAt: number
-}
-
-/**
- * Duel round with player inputs
+ * Duel round result
  */
 export interface DuelRoundResult {
   roundId: string
-  player1Submission?: TOTPSubmission
-  player2Submission?: TOTPSubmission
-  outcome: DuelOutcome
-  winnerId: string | null // null for draw
+  roundNumber: number
+  winnerId: string
+  winnerIndex: 0 | 1
+  verification: DuelVerificationData
   timestamp: number
 }
-
-/**
- * Player's Authenticator setup
- */
-export interface AuthenticatorSetup {
-  secret: string      // Base32 secret for TOTP
-  setupComplete: boolean
-  setupDate?: number
-}
-
