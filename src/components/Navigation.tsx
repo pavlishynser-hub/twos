@@ -6,9 +6,10 @@ import { clsx } from 'clsx'
 
 const navItems = [
   { href: '/', label: 'Lobby', icon: '⚔️' },
-  { href: '/inventory', label: 'Inventory', icon: '🎒' },
+  { href: '/offers', label: 'Offers', icon: '📋' },
+  { href: '/my-duels', label: 'My Duels', icon: '🎮' },
+  { href: '/portfolio', label: 'Portfolio', icon: '🎒' },
   { href: '/profile', label: 'Profile', icon: '👤' },
-  { href: '/setup', label: 'Setup', icon: '🔐' },
 ]
 
 export function Navigation() {

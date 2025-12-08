@@ -1,5 +1,5 @@
-// Prisma Schema for TWOS P2P Duel System
-// Database: PostgreSQL
+// Prisma Schema for TWOS P2P Duel Platform
+// Full schema with Skins, Points Exchange, Duels
 
 generator client {
   provider = "prisma-client-js"
@@ -11,180 +11,40 @@ datasource db {
 }
 
 // ============================================
-// USER MODEL
+// USER
 // ============================================
 
 model User {
-  id        String   @id @default(cuid())
-  username  String   @unique
-  email     String?  @unique
-  telegramId String? @unique
+  id            String   @id @default(cuid())
+  username      String   @unique
+  email         String?  @unique
+  passwordHash  String?
+  telegramId    String?  @unique
   
   // Balance
-  balance   Int      @default(0) // Points balance
+  pointsBalance Int      @default(0)
+  
+  // Rating stats
+  totalDeals      Int    @default(0)
+  completedDeals  Int    @default(0)
+  reliabilityPercent Float @default(100.0)
   
   // Timestamps
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   // Relations
-  reliability    UserReliability?
-  ordersCreated  P2POrder[]       @relation("OrderOwner")
-  ordersJoined   P2POrder[]       @relation("OrderOpponent")
-  gamesAsPlayerA P2PDuelGame[]    @relation("PlayerA")
-  gamesAsPlayerB P2PDuelGame[]    @relation("PlayerB")
-  inventory      UserInventory[]
+  skins             UserSkin[]
+  offersCreated     DuelOffer[]     @relation("OfferCreator")
+  matchesAsCreator  DuelMatch[]     @relation("MatchCreator")
+  matchesAsOpponent DuelMatch[]     @relation("MatchOpponent")
+  bets              DuelBet[]
+  transactions      Transaction[]
+  gamesWon          DuelGame[]      @relation("GameWinner")
 }
 
 // ============================================
-// USER RELIABILITY (Trust Score)
-// ============================================
-
-model UserReliability {
-  id                     String @id @default(cuid())
-  userId                 String @unique
-  user                   User   @relation(fields: [userId], references: [id])
-  
-  // Metrics
-  totalDeals             Int    @default(0)
-  completedDeals         Int    @default(0)
-  reliabilityCoefficient Float  @default(1.0) // 0.0 - 1.0
-  
-  // Additional stats
-  missedConfirmations    Int    @default(0)
-  droppedBeforeMinGames  Int    @default(0)
-  
-  updatedAt DateTime @updatedAt
-}
-
-// ============================================
-// CHIP TYPES (Stakes)
-// ============================================
-
-enum ChipType {
-  SMILE  // 5 points
-  HEART  // 10 points
-  FIRE   // 25 points
-  RING   // 50 points
-}
-
-// ============================================
-// P2P ORDER (Duel Offer)
-// ============================================
-
-enum P2POrderStatus {
-  OPEN                   // Waiting for opponent
-  PENDING_CONFIRMATION   // Opponent joined, waiting owner confirmation
-  IN_PROGRESS            // Duel active
-  COMPLETED              // All games finished
-  CANCELLED              // Cancelled by owner
-  EXPIRED                // Confirmation timeout
-}
-
-model P2POrder {
-  id                String        @id @default(cuid())
-  
-  // Owner (creator)
-  ownerUserId       String
-  owner             User          @relation("OrderOwner", fields: [ownerUserId], references: [id])
-  
-  // Stake
-  chipType          ChipType
-  chipValue         Int           // 5, 10, 25, or 50
-  lockedStakeOwner  Int           @default(0) // Locked from owner's balance
-  lockedStakeOpponent Int         @default(0) // Locked from opponent's balance
-  
-  // Games configuration
-  gamesPlanned      Int           // Total games in series (>= 2)
-  minGamesRequired  Int           @default(2) // Must play at least 2
-  totalGamesPlayed  Int           @default(0)
-  
-  // Status
-  status            P2POrderStatus @default(OPEN)
-  isRewardLocked    Boolean       @default(true) // True until minGamesRequired met
-  
-  // Opponent (when matched)
-  matchedOpponentId String?
-  matchedOpponent   User?         @relation("OrderOpponent", fields: [matchedOpponentId], references: [id])
-  
-  // Confirmation
-  confirmationExpiresAt DateTime?
-  confirmedAt           DateTime?
-  
-  // Current game
-  currentGameIndex  Int           @default(0)
-  
-  // Timestamps
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
-  completedAt       DateTime?
-  
-  // Relations
-  games             P2PDuelGame[]
-  
-  @@index([status])
-  @@index([ownerUserId])
-  @@index([matchedOpponentId])
-}
-
-// ============================================
-// P2P DUEL GAME (Individual Game in Series)
-// ============================================
-
-enum GameResult {
-  A_WINS
-  B_WINS
-  DRAW
-  NOT_PLAYED
-  FORFEITED_A  // Player A forfeited
-  FORFEITED_B  // Player B forfeited
-}
-
-model P2PDuelGame {
-  id            String      @id @default(cuid())
-  
-  // Order reference
-  orderId       String
-  order         P2POrder    @relation(fields: [orderId], references: [id])
-  
-  // Game index in series (1, 2, 3, ...)
-  gameIndex     Int
-  
-  // Players
-  playerAId     String
-  playerA       User        @relation("PlayerA", fields: [playerAId], references: [id])
-  playerBId     String
-  playerB       User        @relation("PlayerB", fields: [playerBId], references: [id])
-  
-  // Result
-  result        GameResult  @default(NOT_PLAYED)
-  winnerId      String?
-  
-  // Randomness (Provably Fair)
-  serverSeedHash    String?   // Published before game
-  serverSecretSeed  String?   // Revealed after game
-  roundNonce        String?   // Unique per game
-  externalRandom    String?   // External randomness source
-  randomNumber      Int?      // Final computed random
-  
-  // Player inputs (for TOTP mechanism)
-  playerACode       String?
-  playerBCode       String?
-  playerASubmittedAt DateTime?
-  playerBSubmittedAt DateTime?
-  
-  // Timing
-  deadline      DateTime?     // Deadline for this game
-  createdAt     DateTime      @default(now())
-  startedAt     DateTime?
-  completedAt   DateTime?
-  
-  @@unique([orderId, gameIndex])
-  @@index([orderId])
-}
-
-// ============================================
-// USER INVENTORY (Skins)
+// SKIN (Abstract skin type)
 // ============================================
 
 enum SkinRarity {
@@ -196,55 +56,296 @@ enum SkinRarity {
 }
 
 model Skin {
-  id          String     @id @default(cuid())
-  name        String
-  description String?
-  imageUrl    String?
-  rarity      SkinRarity
-  value       Int        // Point value
+  id              String      @id @default(cuid())
+  name            String
+  description     String?
+  imageUrl        String?
+  rarity          SkinRarity  @default(COMMON)
+  pointsValue     Int         // Nominal point value
   
-  inventory   UserInventory[]
+  // Shop availability
+  availableForPurchase Boolean @default(true)
+  stockQuantity        Int?    // null = unlimited
+  
+  // Verification
+  skinHash        String?     // hash of metadata + salt
+  metadata        Json?
+  
+  createdAt       DateTime    @default(now())
+  
+  // Relations
+  instances       UserSkin[]
 }
 
-model UserInventory {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  skinId    String
-  skin      Skin     @relation(fields: [skinId], references: [id])
+// ============================================
+// USER SKIN (Concrete instance owned by user)
+// ============================================
+
+enum UserSkinStatus {
+  ACTIVE
+  LOCKED_IN_DUEL
+  BURNED
+  DONATED_TO_PLATFORM
+  CONVERTED_TO_POINTS
+}
+
+model UserSkin {
+  id            String         @id @default(cuid())
+  userId        String
+  user          User           @relation(fields: [userId], references: [id])
+  skinId        String
+  skin          Skin           @relation(fields: [skinId], references: [id])
   
-  isLocked  Boolean  @default(false) // Locked in active duel
-  lockedInOrderId String?
+  status        UserSkinStatus @default(ACTIVE)
+  instanceHash  String?        // hash: skin_id + user_id + created_at + salt
   
-  acquiredAt DateTime @default(now())
+  // If locked in duel
+  lockedInMatchId String?
+  
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  // Relations
+  bets          DuelBet[]
   
   @@index([userId])
   @@index([skinId])
+  @@index([status])
 }
 
 // ============================================
-// SYSTEM VAULT (Platform Pool)
+// CHIP TYPES
 // ============================================
 
-model SystemVault {
+enum ChipType {
+  SMILE  // 5 points
+  HEART  // 10 points
+  FIRE   // 25 points
+  RING   // 50 points
+}
+
+// ============================================
+// DUEL OFFER (P2P offer on the board)
+// ============================================
+
+enum DuelOfferStatus {
+  OPEN
+  WAITING_CREATOR_CONFIRM
+  MATCHED
+  CANCELLED
+  EXPIRED
+}
+
+model DuelOffer {
+  id              String          @id @default(cuid())
+  
+  // Creator
+  creatorUserId   String
+  creator         User            @relation("OfferCreator", fields: [creatorUserId], references: [id])
+  
+  // Bet configuration
+  chipType        ChipType
+  chipPointsValue Int             // 5, 10, 25, or 50
+  gamesCount      Int             // Must be >= 2
+  
+  // Status
+  status          DuelOfferStatus @default(OPEN)
+  
+  // Timing
+  createdAt       DateTime        @default(now())
+  expiresAt       DateTime?
+  
+  // Relations
+  matches         DuelMatch[]
+  
+  @@index([status])
+  @@index([creatorUserId])
+}
+
+// ============================================
+// DUEL MATCH (Actual 1v1 match)
+// ============================================
+
+enum DuelMatchStatus {
+  AWAITING_CREATOR_CONFIRM
+  IN_PROGRESS
+  FINISHED
+  CANCELLED
+  CREATOR_NO_SHOW      // Creator didn't confirm
+  BOTH_ABANDONED       // Both left before completing
+}
+
+model DuelMatch {
+  id                    String          @id @default(cuid())
+  
+  // Offer reference
+  offerId               String
+  offer                 DuelOffer       @relation(fields: [offerId], references: [id])
+  
+  // Players
+  creatorUserId         String
+  creator               User            @relation("MatchCreator", fields: [creatorUserId], references: [id])
+  opponentUserId        String
+  opponent              User            @relation("MatchOpponent", fields: [opponentUserId], references: [id])
+  
+  // Games configuration
+  gamesPlanned          Int             // From offer.gamesCount
+  gamesPlayed           Int             @default(0)
+  
+  // Status
+  status                DuelMatchStatus @default(AWAITING_CREATOR_CONFIRM)
+  
+  // Confirmation timer
+  creatorConfirmDeadline DateTime?
+  confirmedAt           DateTime?
+  
+  // Winner (after all games)
+  winnerId              String?
+  
+  // Timestamps
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  finishedAt            DateTime?
+
+  // Relations
+  games                 DuelGame[]
+  bets                  DuelBet[]
+  
+  @@index([status])
+  @@index([creatorUserId])
+  @@index([opponentUserId])
+}
+
+// ============================================
+// DUEL GAME (Individual game/round in a match)
+// ============================================
+
+enum DuelGameStatus {
+  PENDING
+  AWAITING_READY       // Waiting for both players to be ready
+  IN_PROGRESS
+  FINISHED
+  CANCELLED
+  FORFEITED
+}
+
+model DuelGame {
+  id              String          @id @default(cuid())
+  
+  // Match reference
+  matchId         String
+  match           DuelMatch       @relation(fields: [matchId], references: [id])
+  
+  roundIndex      Int             // 0, 1, 2, ...
+  
+  // Status
+  status          DuelGameStatus  @default(PENDING)
+  
+  // Fairness (provably fair)
+  roundSecret     String?         // Stored, revealed after game
+  roundHashCommit String?         // SHA256 of roundSecret, shown before
+  
+  // Player readiness (for games after first)
+  creatorReady    Boolean         @default(false)
+  opponentReady   Boolean         @default(false)
+  readyDeadline   DateTime?
+  
+  // Result
+  winnerUserId    String?
+  winner          User?           @relation("GameWinner", fields: [winnerUserId], references: [id])
+  
+  // Timestamps
+  createdAt       DateTime        @default(now())
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  
+  @@unique([matchId, roundIndex])
+  @@index([matchId])
+}
+
+// ============================================
+// DUEL BET (Locked assets in a duel)
+// ============================================
+
+enum DuelBetStatus {
+  LOCKED
+  WON
+  LOST
+  BURNED_TO_PLATFORM
+  RETURNED           // If match cancelled before start
+}
+
+model DuelBet {
+  id              String        @id @default(cuid())
+  
+  // Match reference
+  matchId         String
+  match           DuelMatch     @relation(fields: [matchId], references: [id])
+  
+  // User
+  userId          String
+  user            User          @relation(fields: [userId], references: [id])
+  
+  // Bet (can be skin or points)
+  userSkinId      String?
+  userSkin        UserSkin?     @relation(fields: [userSkinId], references: [id])
+  pointsAmount    Int?          // If betting points instead of skin
+  
+  // Status
+  status          DuelBetStatus @default(LOCKED)
+  
+  createdAt       DateTime      @default(now())
+  resolvedAt      DateTime?
+  
+  @@index([matchId])
+  @@index([userId])
+}
+
+// ============================================
+// TRANSACTION (Points/Skins history)
+// ============================================
+
+enum TransactionType {
+  POINTS_TO_SKIN
+  SKIN_TO_POINTS
+  DUEL_WIN
+  DUEL_LOSS
+  PENALTY
+  DONATION
+  BONUS
+  INITIAL_BALANCE
+}
+
+model Transaction {
+  id              String          @id @default(cuid())
+  
+  userId          String
+  user            User            @relation(fields: [userId], references: [id])
+  
+  type            TransactionType
+  amountPoints    Int             // Can be negative
+  
+  // References
+  relatedMatchId  String?
+  relatedSkinId   String?
+  
+  // Details
+  description     String?
+  metadata        Json?
+  
+  createdAt       DateTime        @default(now())
+  
+  @@index([userId])
+  @@index([type])
+}
+
+// ============================================
+// PLATFORM VAULT (Burned skins/points)
+// ============================================
+
+model PlatformVault {
   id            String   @id @default(cuid())
   totalPoints   Int      @default(0)
-  
-  // Transaction log
-  transactions  VaultTransaction[]
-  
+  totalSkins    Int      @default(0)
   updatedAt     DateTime @updatedAt
 }
-
-model VaultTransaction {
-  id          String      @id @default(cuid())
-  vaultId     String
-  vault       SystemVault @relation(fields: [vaultId], references: [id])
-  
-  amount      Int
-  reason      String      // "BOTH_PLAYERS_FORFEIT", "PLATFORM_FEE", etc.
-  orderId     String?
-  
-  createdAt   DateTime    @default(now())
-}
-
