@@ -106,3 +106,43 @@ export interface VerificationResponse {
   }
 }
 
+// ============================================
+// TOTP DUEL TYPES (Player Input Mechanism)
+// ============================================
+
+/**
+ * Result of a duel round
+ */
+export type DuelOutcome = 'player1' | 'player2' | 'draw'
+
+/**
+ * Player's TOTP submission
+ */
+export interface TOTPSubmission {
+  playerId: string
+  code: string      // 6-digit code as string (preserves leading zeros)
+  codeValue: number // Numeric value for comparison
+  submittedAt: number
+}
+
+/**
+ * Duel round with player inputs
+ */
+export interface DuelRoundResult {
+  roundId: string
+  player1Submission?: TOTPSubmission
+  player2Submission?: TOTPSubmission
+  outcome: DuelOutcome
+  winnerId: string | null // null for draw
+  timestamp: number
+}
+
+/**
+ * Player's Authenticator setup
+ */
+export interface AuthenticatorSetup {
+  secret: string      // Base32 secret for TOTP
+  setupComplete: boolean
+  setupDate?: number
+}
+

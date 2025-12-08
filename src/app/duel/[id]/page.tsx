@@ -4,362 +4,373 @@ import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { mockUsers, currentUser } from '@/data/mock'
 import { 
-  generateDemoDuelResolution, 
-  generateFairnessProof,
-  formatCommitment 
-} from '@/lib/fairRng'
-import { DuelFairnessData } from '@/types'
+  compareTOTPCodes, 
+  formatTOTPCode, 
+  getResultMessage,
+  getResultColor,
+  DuelResult,
+  INPUT_WINDOW_MS
+} from '@/lib/duelEngine'
+import { TOTPInput, TOTPDisplay, CountdownTimer } from '@/components/TOTPInput'
+import { FairnessBadge } from '@/components/FairnessBadge'
 import { clsx } from 'clsx'
 
-type DuelPhase = 'committing' | 'waiting' | 'countdown' | 'rolling' | 'result'
+type DuelPhase = 'waiting' | 'countdown' | 'input' | 'reveal' | 'result'
 
 export default function DuelPage() {
   const router = useRouter()
-  const [phase, setPhase] = useState<DuelPhase>('committing')
+  const [phase, setPhase] = useState<DuelPhase>('waiting')
   const [countdown, setCountdown] = useState(3)
-  const [winner, setWinner] = useState<'player' | 'opponent' | null>(null)
-  const [rollingValue, setRollingValue] = useState(50)
-  const [fairnessData, setFairnessData] = useState<DuelFairnessData | null>(null)
-  const [seedCommitment, setSeedCommitment] = useState<string>('')
-  const [showFairnessDetails, setShowFairnessDetails] = useState(false)
+  const [inputTimeLeft, setInputTimeLeft] = useState(10)
+  const [playerCode, setPlayerCode] = useState<string | null>(null)
+  const [opponentCode, setOpponentCode] = useState<string | null>(null)
+  const [result, setResult] = useState<DuelResult | null>(null)
+  const [playerSubmitted, setPlayerSubmitted] = useState(false)
+  const [opponentSubmitted, setOpponentSubmitted] = useState(false)
 
-  const opponent = mockUsers[0] // Mock opponent
+  const opponent = mockUsers[0]
 
-  // Generate seed commitment on mount
+  // Phase transitions
   useEffect(() => {
-    const initFairness = async () => {
-      // Generate commitment (shown to players before duel)
-      const resolution = await generateDemoDuelResolution(currentUser.id, opponent.id)
-      setSeedCommitment(resolution.seedCommitment)
-      
-      // Store full resolution for later
-      const proof = generateFairnessProof(resolution)
-      setFairnessData({
-        seedCommitment: resolution.seedCommitment,
-        timestamp: resolution.timestamp,
-        totpCode: resolution.totpCode,
-        winnerIndex: resolution.winnerIndex,
-        algorithm: proof.algorithm,
-        timeStep: proof.timeStep
-      })
-
-      // Move to waiting phase after commitment is shown
-      setTimeout(() => setPhase('waiting'), 1500)
+    if (phase === 'waiting') {
+      const timer = setTimeout(() => setPhase('countdown'), 2000)
+      return () => clearTimeout(timer)
     }
-
-    initFairness()
-  }, [opponent.id])
-
-  // Auto-start countdown after waiting
-  useEffect(() => {
-    if (phase !== 'waiting') return
-    
-    const startTimer = setTimeout(() => {
-      setPhase('countdown')
-    }, 2000)
-
-    return () => clearTimeout(startTimer)
   }, [phase])
 
-  // Countdown logic
+  // Countdown phase
   useEffect(() => {
     if (phase !== 'countdown') return
 
     if (countdown === 0) {
-      setPhase('rolling')
+      setPhase('input')
       return
     }
 
-    const timer = setTimeout(() => {
-      setCountdown(prev => prev - 1)
-    }, 1000)
-
+    const timer = setTimeout(() => setCountdown(prev => prev - 1), 1000)
     return () => clearTimeout(timer)
   }, [phase, countdown])
 
-  // Rolling animation with fairness resolution
+  // Input timer
   useEffect(() => {
-    if (phase !== 'rolling' || !fairnessData) return
+    if (phase !== 'input') return
 
-    let iteration = 0
-    const maxIterations = 30
-    
-    const rollInterval = setInterval(() => {
-      setRollingValue(Math.floor(Math.random() * 100))
-      iteration++
-
-      if (iteration >= maxIterations) {
-        clearInterval(rollInterval)
-        
-        // Use the pre-determined fair result
-        const isPlayerWinner = fairnessData.winnerIndex === 0
-        setWinner(isPlayerWinner ? 'player' : 'opponent')
-        setRollingValue(isPlayerWinner ? 75 : 25)
-        setPhase('result')
-      }
-    }, 100)
-
-    return () => clearInterval(rollInterval)
-  }, [phase, fairnessData])
-
-  const handleVerify = useCallback(() => {
-    if (fairnessData) {
-      // Navigate to verification page with duel data
-      const params = new URLSearchParams({
-        commitment: fairnessData.seedCommitment,
-        timestamp: fairnessData.timestamp.toString(),
-        totp: fairnessData.totpCode.toString(),
-        winner: fairnessData.winnerIndex.toString()
-      })
-      router.push(`/verify?${params.toString()}`)
+    if (inputTimeLeft === 0) {
+      // Time's up - process results
+      handleTimeUp()
+      return
     }
-  }, [fairnessData, router])
+
+    const timer = setTimeout(() => setInputTimeLeft(prev => prev - 1), 1000)
+    return () => clearTimeout(timer)
+  }, [phase, inputTimeLeft])
+
+  // Simulate opponent input (random delay, random code)
+  useEffect(() => {
+    if (phase !== 'input' || opponentSubmitted) return
+
+    const delay = 2000 + Math.random() * 5000 // 2-7 seconds
+    const timer = setTimeout(() => {
+      const code = Math.floor(Math.random() * 1000000)
+      setOpponentCode(formatTOTPCode(code))
+      setOpponentSubmitted(true)
+    }, delay)
+
+    return () => clearTimeout(timer)
+  }, [phase, opponentSubmitted])
+
+  // Check if both submitted
+  useEffect(() => {
+    if (playerSubmitted && opponentSubmitted && phase === 'input') {
+      setTimeout(() => setPhase('reveal'), 500)
+    }
+  }, [playerSubmitted, opponentSubmitted, phase])
+
+  // Reveal phase - show codes and result
+  useEffect(() => {
+    if (phase !== 'reveal') return
+
+    const timer = setTimeout(() => {
+      // Calculate result
+      const p1Code = parseInt(playerCode || '0')
+      const p2Code = parseInt(opponentCode || '0')
+      const duelResult = compareTOTPCodes(p1Code, p2Code)
+      setResult(duelResult)
+      setPhase('result')
+    }, 2000)
+
+    return () => clearTimeout(timer)
+  }, [phase, playerCode, opponentCode])
+
+  const handlePlayerSubmit = useCallback((code: string) => {
+    if (playerSubmitted) return
+    setPlayerCode(code)
+    setPlayerSubmitted(true)
+  }, [playerSubmitted])
+
+  const handleTimeUp = () => {
+    // If player didn't submit, use 000000
+    if (!playerSubmitted) {
+      setPlayerCode('000000')
+    }
+    // If opponent didn't submit, use 000000
+    if (!opponentSubmitted) {
+      setOpponentCode('000000')
+    }
+    setPhase('reveal')
+  }
+
+  const getStakeChange = () => {
+    if (result === 'draw') return { text: '0', color: 'text-accent-warning' }
+    if (result === 'player1') return { text: '+1,000 💎', color: 'text-accent-success' }
+    return { text: '-1,000 💎', color: 'text-accent-danger' }
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
       <div className="max-w-2xl w-full">
-        {/* Provably Fair Badge */}
+        {/* Fairness Badge */}
         <div className="flex items-center justify-center gap-2 mb-4">
-          <div className="flex items-center gap-2 px-4 py-2 bg-accent-success/10 border border-accent-success/30 rounded-full">
-            <span className="w-2 h-2 rounded-full bg-accent-success animate-pulse" />
-            <span className="text-sm font-medium text-accent-success">Provably Fair</span>
-            <span className="text-xs text-gray-400">TOTP-SHA256</span>
-          </div>
+          <FairnessBadge />
         </div>
-
-        {/* Seed Commitment Display (Before Duel) */}
-        {seedCommitment && phase !== 'result' && (
-          <div className="mb-4 p-3 bg-dark-800 rounded-xl border border-white/5">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-gray-400">Seed Commitment</span>
-              <button 
-                onClick={() => setShowFairnessDetails(!showFairnessDetails)}
-                className="text-xs text-accent-primary hover:text-accent-secondary transition-colors"
-              >
-                {showFairnessDetails ? 'Hide' : 'Details'}
-              </button>
-            </div>
-            <p className="font-mono text-sm text-white mt-1 break-all">
-              {showFairnessDetails ? seedCommitment : formatCommitment(seedCommitment)}
-            </p>
-            {showFairnessDetails && (
-              <p className="text-xs text-gray-500 mt-2">
-                This hash was generated before the duel and cannot be changed.
-                It proves the outcome wasn't manipulated.
-              </p>
-            )}
-          </div>
-        )}
 
         {/* Duel Arena */}
         <div className="card-base relative overflow-hidden">
           {/* Background effects */}
           <div className="absolute inset-0 bg-gradient-to-b from-accent-primary/5 to-accent-secondary/5" />
-          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-px h-full bg-gradient-to-b from-accent-primary/50 via-accent-secondary/50 to-transparent" />
-
-          {/* Committing Phase */}
-          {phase === 'committing' && (
+          
+          {/* Waiting Phase */}
+          {phase === 'waiting' && (
             <div className="relative text-center py-12">
               <div className="w-16 h-16 mx-auto mb-4 rounded-full border-4 border-accent-primary border-t-transparent animate-spin" />
-              <p className="text-lg font-medium text-white">Generating Commitment...</p>
-              <p className="text-sm text-gray-400 mt-2">Creating provably fair seed</p>
+              <p className="text-lg font-medium text-white">Matching opponent...</p>
+              <p className="text-sm text-gray-400 mt-2">Preparing duel arena</p>
             </div>
           )}
 
-          {/* Players */}
-          {phase !== 'committing' && (
-            <>
-              <div className="relative flex items-center justify-between mb-8">
-                {/* Player 1 (You) */}
-                <div className={clsx(
-                  'flex-1 text-center p-4 rounded-2xl transition-all duration-500',
-                  phase === 'result' && winner === 'player' && 'bg-accent-success/20 ring-2 ring-accent-success',
-                  phase === 'result' && winner === 'opponent' && 'opacity-50'
-                )}>
-                  <div className="w-20 h-20 mx-auto rounded-2xl bg-gradient-to-br from-accent-primary to-accent-secondary flex items-center justify-center text-3xl font-bold mb-3 shadow-neon">
+          {/* Countdown Phase */}
+          {phase === 'countdown' && (
+            <div className="relative text-center py-12">
+              <div className={clsx(
+                'w-24 h-24 mx-auto rounded-full flex items-center justify-center',
+                'bg-accent-danger text-white text-5xl font-bold',
+                'animate-pulse shadow-[0_0_40px_rgba(239,68,68,0.5)]'
+              )}>
+                {countdown}
+              </div>
+              <p className="text-xl font-bold text-white mt-6">GET READY!</p>
+              <p className="text-gray-400 mt-2">Open Google Authenticator</p>
+            </div>
+          )}
+
+          {/* Input Phase */}
+          {phase === 'input' && (
+            <div className="relative">
+              {/* Players Header */}
+              <div className="flex items-center justify-between mb-6">
+                {/* You */}
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-accent-primary to-accent-secondary flex items-center justify-center text-lg font-bold">
                     {currentUser.username[0]}
                   </div>
-                  <h3 className="font-bold text-white text-lg">{currentUser.username}</h3>
-                  <p className="text-sm text-gray-400">⭐ {currentUser.rating}</p>
-                  {phase === 'result' && winner === 'player' && (
-                    <div className="mt-2 badge-success">🏆 Winner!</div>
-                  )}
+                  <div>
+                    <p className="font-semibold text-white">{currentUser.username}</p>
+                    <p className="text-xs text-gray-400">You</p>
+                  </div>
+                </div>
+
+                <div className="text-2xl font-bold text-gray-600">VS</div>
+
+                {/* Opponent */}
+                <div className="flex items-center gap-3">
+                  <div>
+                    <p className="font-semibold text-white text-right">{opponent.username}</p>
+                    <p className="text-xs text-gray-400 text-right">
+                      {opponentSubmitted ? '✓ Submitted' : '⏳ Entering...'}
+                    </p>
+                  </div>
+                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-accent-danger to-accent-warning flex items-center justify-center text-lg font-bold">
+                    {opponent.username[0]}
+                  </div>
+                </div>
+              </div>
+
+              {/* Timer */}
+              <CountdownTimer 
+                seconds={inputTimeLeft} 
+                total={10} 
+                label="Time remaining" 
+              />
+
+              {/* Input Area */}
+              <div className="mt-6 p-6 bg-dark-700/50 rounded-2xl">
+                {!playerSubmitted ? (
+                  <TOTPInput
+                    onSubmit={handlePlayerSubmit}
+                    timeLeft={inputTimeLeft}
+                    label="Enter your TOTP code"
+                  />
+                ) : (
+                  <div className="text-center py-4">
+                    <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-accent-success/20 flex items-center justify-center">
+                      <span className="text-3xl">✓</span>
+                    </div>
+                    <p className="text-lg font-medium text-accent-success">Code Submitted!</p>
+                    <p className="text-sm text-gray-400 mt-1">
+                      {opponentSubmitted ? 'Revealing results...' : 'Waiting for opponent...'}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Stake Info */}
+              <div className="mt-4 p-3 bg-dark-700 rounded-xl text-center">
+                <p className="text-sm text-gray-400">Stake</p>
+                <p className="text-xl font-bold text-accent-warning">💎 1,000</p>
+              </div>
+            </div>
+          )}
+
+          {/* Reveal Phase */}
+          {phase === 'reveal' && (
+            <div className="relative text-center py-8">
+              <p className="text-xl font-bold text-white mb-8 animate-pulse">
+                Revealing codes...
+              </p>
+              
+              <div className="flex items-center justify-around">
+                {/* Player Code */}
+                <div>
+                  <p className="text-sm text-gray-400 mb-2">{currentUser.username}</p>
+                  <TOTPDisplay 
+                    code={playerCode || '000000'} 
+                    highlight="none"
+                  />
+                </div>
+
+                <div className="text-2xl font-bold text-gray-600">VS</div>
+
+                {/* Opponent Code */}
+                <div>
+                  <p className="text-sm text-gray-400 mb-2">{opponent.username}</p>
+                  <TOTPDisplay 
+                    code={opponentCode || '000000'} 
+                    highlight="none"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Result Phase */}
+          {phase === 'result' && result && (
+            <div className="relative">
+              {/* Result Banner */}
+              <div className={clsx(
+                'text-center py-6 rounded-xl mb-6',
+                result === 'player1' && 'bg-accent-success/20',
+                result === 'player2' && 'bg-accent-danger/20',
+                result === 'draw' && 'bg-accent-warning/20'
+              )}>
+                <p className={clsx('text-3xl font-bold', getResultColor(result, true))}>
+                  {getResultMessage(result, true)}
+                </p>
+                <p className={clsx('text-xl font-semibold mt-2', getStakeChange().color)}>
+                  {getStakeChange().text}
+                </p>
+              </div>
+
+              {/* Codes Comparison */}
+              <div className="flex items-stretch justify-around mb-6">
+                {/* Player */}
+                <div className={clsx(
+                  'flex-1 p-4 rounded-xl mr-2',
+                  result === 'player1' && 'bg-accent-success/10 ring-2 ring-accent-success',
+                  result === 'player2' && 'bg-dark-700 opacity-60',
+                  result === 'draw' && 'bg-accent-warning/10'
+                )}>
+                  <p className="text-sm text-gray-400 text-center mb-2">
+                    {currentUser.username}
+                    {result === 'player1' && ' 🏆'}
+                  </p>
+                  <TOTPDisplay 
+                    code={playerCode || '000000'} 
+                    highlight={result === 'player1' ? 'win' : result === 'draw' ? 'draw' : 'lose'}
+                  />
+                  <p className="text-center mt-2 font-mono text-lg text-white">
+                    {parseInt(playerCode || '0').toLocaleString()}
+                  </p>
                 </div>
 
                 {/* VS */}
-                <div className="px-6">
-                  <div className={clsx(
-                    'w-16 h-16 rounded-full flex items-center justify-center font-bold text-xl transition-all',
-                    phase === 'rolling' 
-                      ? 'bg-accent-warning animate-pulse' 
-                      : phase === 'countdown'
-                      ? 'bg-accent-danger scale-110'
-                      : 'bg-dark-600'
+                <div className="flex items-center px-4">
+                  <span className={clsx(
+                    'text-sm font-medium px-2 py-1 rounded',
+                    result === 'player1' && 'text-accent-success',
+                    result === 'player2' && 'text-accent-danger',
+                    result === 'draw' && 'text-accent-warning bg-accent-warning/20'
                   )}>
-                    {phase === 'countdown' ? countdown : 'VS'}
-                  </div>
-                </div>
-
-                {/* Player 2 (Opponent) */}
-                <div className={clsx(
-                  'flex-1 text-center p-4 rounded-2xl transition-all duration-500',
-                  phase === 'result' && winner === 'opponent' && 'bg-accent-success/20 ring-2 ring-accent-success',
-                  phase === 'result' && winner === 'player' && 'opacity-50'
-                )}>
-                  <div className="w-20 h-20 mx-auto rounded-2xl bg-gradient-to-br from-accent-danger to-accent-warning flex items-center justify-center text-3xl font-bold mb-3">
-                    {opponent.username[0]}
-                  </div>
-                  <h3 className="font-bold text-white text-lg">{opponent.username}</h3>
-                  <p className="text-sm text-gray-400">⭐ {opponent.rating}</p>
-                  {phase === 'result' && winner === 'opponent' && (
-                    <div className="mt-2 badge-success">🏆 Winner!</div>
-                  )}
-                </div>
-              </div>
-
-              {/* Rolling Bar */}
-              <div className="relative h-8 bg-dark-700 rounded-full overflow-hidden mb-6">
-                {/* Player side */}
-                <div 
-                  className={clsx(
-                    'absolute left-0 top-0 h-full bg-gradient-to-r from-accent-primary to-accent-secondary transition-all',
-                    phase === 'rolling' ? 'duration-100' : 'duration-500'
-                  )}
-                  style={{ width: `${rollingValue}%` }}
-                />
-                {/* Opponent side */}
-                <div 
-                  className={clsx(
-                    'absolute right-0 top-0 h-full bg-gradient-to-l from-accent-danger to-accent-warning transition-all',
-                    phase === 'rolling' ? 'duration-100' : 'duration-500'
-                  )}
-                  style={{ width: `${100 - rollingValue}%` }}
-                />
-                {/* Center marker */}
-                <div className="absolute left-1/2 top-0 -translate-x-1/2 w-1 h-full bg-white/50" />
-                
-                {/* Value display */}
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="font-mono font-bold text-white text-lg drop-shadow-lg">
-                    {rollingValue.toFixed(0)}%
+                    {result === 'player1' ? '>' : result === 'player2' ? '<' : '='}
                   </span>
                 </div>
+
+                {/* Opponent */}
+                <div className={clsx(
+                  'flex-1 p-4 rounded-xl ml-2',
+                  result === 'player2' && 'bg-accent-success/10 ring-2 ring-accent-success',
+                  result === 'player1' && 'bg-dark-700 opacity-60',
+                  result === 'draw' && 'bg-accent-warning/10'
+                )}>
+                  <p className="text-sm text-gray-400 text-center mb-2">
+                    {opponent.username}
+                    {result === 'player2' && ' 🏆'}
+                  </p>
+                  <TOTPDisplay 
+                    code={opponentCode || '000000'} 
+                    highlight={result === 'player2' ? 'win' : result === 'draw' ? 'draw' : 'lose'}
+                  />
+                  <p className="text-center mt-2 font-mono text-lg text-white">
+                    {parseInt(opponentCode || '0').toLocaleString()}
+                  </p>
+                </div>
               </div>
 
-              {/* Phase messages */}
-              <div className="text-center mb-6">
-                {phase === 'waiting' && (
-                  <p className="text-gray-400 animate-pulse">Waiting for opponent...</p>
-                )}
-                {phase === 'countdown' && (
-                  <p className="text-2xl font-bold text-accent-warning animate-pulse">Get Ready!</p>
-                )}
-                {phase === 'rolling' && (
-                  <div>
-                    <p className="text-xl font-bold text-white animate-pulse">Rolling...</p>
-                    <p className="text-xs text-gray-500 mt-1">Using TOTP @ {new Date().toISOString()}</p>
-                  </div>
-                )}
-                {phase === 'result' && (
-                  <div className="space-y-2">
-                    <p className={clsx(
-                      'text-2xl font-bold',
-                      winner === 'player' ? 'text-accent-success' : 'text-accent-danger'
-                    )}>
-                      {winner === 'player' ? '🎉 You Won!' : '😔 You Lost'}
-                    </p>
-                    <p className={clsx(
-                      'text-lg font-semibold',
-                      winner === 'player' ? 'text-accent-success' : 'text-accent-danger'
-                    )}>
-                      {winner === 'player' ? '+1,000 💎' : '-1,000 💎'}
-                    </p>
-                  </div>
-                )}
-              </div>
+              {/* Draw Explanation */}
+              {result === 'draw' && (
+                <div className="p-4 bg-accent-warning/10 border border-accent-warning/30 rounded-xl mb-6 text-center">
+                  <p className="text-accent-warning font-medium">🎲 Incredible! Both codes are identical!</p>
+                  <p className="text-sm text-gray-400 mt-1">
+                    Probability: 1 in 1,000,000 (0.0001%)
+                  </p>
+                  <p className="text-sm text-gray-400">
+                    Stakes have been returned to both players.
+                  </p>
+                </div>
+              )}
 
-              {/* Stake info */}
-              <div className="p-4 bg-dark-700 rounded-xl text-center">
-                <p className="text-sm text-gray-400 mb-1">Total Pot</p>
-                <p className="text-2xl font-bold text-accent-warning">💎 2,000</p>
+              {/* Actions */}
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => router.push('/')}
+                  className="flex-1 btn-secondary"
+                >
+                  Back to Lobby
+                </button>
+                <button 
+                  onClick={() => window.location.reload()}
+                  className="flex-1 btn-primary"
+                >
+                  Rematch
+                </button>
               </div>
-            </>
-          )}
-
-          {/* Result Actions */}
-          {phase === 'result' && (
-            <div className="flex gap-3 mt-6">
-              <button 
-                onClick={() => router.push('/')}
-                className="flex-1 btn-secondary"
-              >
-                Back to Lobby
-              </button>
-              <button className="flex-1 btn-primary">
-                Rematch
-              </button>
             </div>
           )}
         </div>
 
-        {/* Fairness Proof Section (After Result) */}
-        {phase === 'result' && fairnessData && (
-          <div className="mt-4 card-base">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-white flex items-center gap-2">
-                <span className="text-accent-success">🔒</span>
-                Fairness Proof
-              </h3>
-              <span className="badge-success">Verified</span>
-            </div>
-
-            <div className="space-y-3 text-sm">
-              <div className="flex justify-between items-start">
-                <span className="text-gray-400">Seed Commitment</span>
-                <span className="font-mono text-white text-right max-w-[200px] truncate">
-                  {formatCommitment(fairnessData.seedCommitment)}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400">Timestamp</span>
-                <span className="font-mono text-white">
-                  {new Date(fairnessData.timestamp).toISOString()}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400">TOTP Code</span>
-                <span className="font-mono text-accent-primary">
-                  {fairnessData.totpCode.toString().padStart(6, '0')}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400">Winner Index</span>
-                <span className="font-mono text-white">
-                  {fairnessData.winnerIndex} ({fairnessData.winnerIndex === 0 ? 'Player 1' : 'Player 2'})
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400">Algorithm</span>
-                <span className="text-white">{fairnessData.algorithm}</span>
-              </div>
-            </div>
-
-            <button 
-              onClick={handleVerify}
-              className="w-full mt-4 btn-secondary text-sm"
-            >
-              🔍 Verify Fairness
-            </button>
-          </div>
-        )}
-
-        {/* Provably Fair info (always visible) */}
+        {/* How it works */}
         <div className="mt-4 text-center">
-          <button 
-            onClick={() => setShowFairnessDetails(!showFairnessDetails)}
-            className="text-sm text-gray-500 hover:text-gray-400 transition-colors"
-          >
-            🔒 Provably Fair • TOTP-SHA256 • Click for details
+          <button className="text-sm text-gray-500 hover:text-gray-400 transition-colors">
+            🔒 Provably Fair • Higher code wins • Equal codes = Draw
           </button>
         </div>
       </div>

@@ -8,6 +8,7 @@ const navItems = [
   { href: '/', label: 'Lobby', icon: '⚔️' },
   { href: '/inventory', label: 'Inventory', icon: '🎒' },
   { href: '/profile', label: 'Profile', icon: '👤' },
+  { href: '/setup', label: 'Setup', icon: '🔐' },
 ]
 
 export function Navigation() {
