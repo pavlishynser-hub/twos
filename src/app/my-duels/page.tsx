@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { clsx } from 'clsx'
 import Link from 'next/link'
 
@@ -23,7 +24,7 @@ interface DuelMatch {
 // Mock data
 const mockMatches: DuelMatch[] = [
   {
-    id: '1',
+    id: 'duel_nighthunter',
     opponent: { username: 'NightHunter', reliability: 88 },
     chipEmoji: '🔥',
     chipValue: 25,
@@ -33,7 +34,7 @@ const mockMatches: DuelMatch[] = [
     isCreator: true,
   },
   {
-    id: '2',
+    id: 'duel_cryptowolf',
     opponent: { username: 'CryptoWolf', reliability: 99 },
     chipEmoji: '💍',
     chipValue: 50,
@@ -44,7 +45,7 @@ const mockMatches: DuelMatch[] = [
     confirmDeadline: new Date(Date.now() + 90000), // 1:30 left
   },
   {
-    id: '3',
+    id: 'duel_phantomx',
     opponent: { username: 'PhantomX', reliability: 72 },
     chipEmoji: '❤️',
     chipValue: 10,
@@ -89,6 +90,7 @@ function CountdownTimer({ deadline }: { deadline: Date }) {
 }
 
 export default function MyDuelsPage() {
+  const router = useRouter()
   const [filter, setFilter] = useState<'all' | 'active' | 'finished'>('all')
 
   const activeMatches = mockMatches.filter(m => 
@@ -105,13 +107,13 @@ export default function MyDuelsPage() {
       : finishedMatches
 
   const handleConfirm = (matchId: string) => {
-    console.log('Confirming match:', matchId)
-    // TODO: Call API
+    // Navigate to duel page
+    router.push(`/duel/${matchId}`)
   }
 
   const handleContinue = (matchId: string) => {
-    console.log('Continuing match:', matchId)
-    // TODO: Navigate to duel
+    // Navigate to duel page
+    router.push(`/duel/${matchId}`)
   }
 
   return (
@@ -290,4 +292,3 @@ export default function MyDuelsPage() {
     </div>
   )
 }
-
