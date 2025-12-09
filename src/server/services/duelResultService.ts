@@ -287,7 +287,7 @@ export class DuelResultService {
       prisma.duelMatch.count({
         where: {
           OR: [{ creatorUserId: userId }, { opponentUserId: userId }],
-          winnerId: { not: userId, not: null },
+          winnerId: { not: null, notIn: [userId] },
           status: 'FINISHED',
         },
       }),
