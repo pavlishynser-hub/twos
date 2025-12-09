@@ -4,6 +4,7 @@
  */
 
 import prisma from '@/lib/prisma'
+import { DuelOfferStatus, DuelMatchStatus, DuelGameStatus } from '@prisma/client'
 import { ChipType, CHIP_VALUES } from '../types'
 import { determineWinner, calculateTimeSlot, DuelRoundParams } from './winnerDetermination'
 import { RewardService, MatchScore } from './rewardService'
@@ -70,14 +71,14 @@ export class MatchService {
         opponentUserId: input.opponentId,
         gamesPlanned: input.gamesPlanned,
         gamesPlayed: 0,
-        status: 'IN_PROGRESS',
+        status: DuelMatchStatus.IN_PROGRESS,
         offer: {
           create: {
             creatorUserId: input.creatorId,
             chipType: input.chipType,
             chipPointsValue: chipValue,
             gamesCount: input.gamesPlanned,
-            status: 'MATCHED',
+            status: DuelOfferStatus.MATCHED,
           }
         }
       },
@@ -133,7 +134,7 @@ export class MatchService {
       throw new Error('Match not found')
     }
 
-    if (match.status !== 'IN_PROGRESS') {
+    if (match.status !== DuelMatchStatus.IN_PROGRESS) {
       throw new Error('Match is not in progress')
     }
 
@@ -162,7 +163,7 @@ export class MatchService {
       data: {
         matchId: match.id,
         roundIndex: roundNumber - 1,
-        status: 'FINISHED',
+        status: DuelGameStatus.FINISHED,
         winnerUserId: result.winnerId,
         creatorReady: true,
         opponentReady: true,
@@ -220,7 +221,7 @@ export class MatchService {
       where: { id: match.id },
       data: {
         gamesPlayed: newGamesPlayed,
-        status: matchCompleted ? 'FINISHED' : 'IN_PROGRESS',
+        status: matchCompleted ? DuelMatchStatus.FINISHED : DuelMatchStatus.IN_PROGRESS,
         finishedAt: matchCompleted ? new Date() : null,
         winnerId: matchCompleted 
           ? (creatorWins > opponentWins 
