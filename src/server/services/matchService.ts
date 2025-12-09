@@ -64,7 +64,18 @@ export class MatchService {
   static async createMatch(input: CreateMatchInput): Promise<MatchResult> {
     const chipValue = CHIP_VALUES[input.chipType]
 
-    // Create match in database
+    // First create the offer
+    const offer = await prisma.duelOffer.create({
+      data: {
+        creatorUserId: input.creatorId,
+        chipType: input.chipType,
+        chipPointsValue: chipValue,
+        gamesCount: input.gamesPlanned,
+        status: DuelOfferStatus.MATCHED,
+      }
+    })
+
+    // Then create match with offer reference
     const match = await prisma.duelMatch.create({
       data: {
         creatorUserId: input.creatorId,
@@ -72,15 +83,7 @@ export class MatchService {
         gamesPlanned: input.gamesPlanned,
         gamesPlayed: 0,
         status: DuelMatchStatus.IN_PROGRESS,
-        offer: {
-          create: {
-            creatorUserId: input.creatorId,
-            chipType: input.chipType,
-            chipPointsValue: chipValue,
-            gamesCount: input.gamesPlanned,
-            status: DuelOfferStatus.MATCHED,
-          }
-        }
+        offerId: offer.id,
       },
       include: {
         offer: true,
