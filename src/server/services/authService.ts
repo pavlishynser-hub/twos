@@ -1,8 +1,10 @@
 /**
  * Auth Service
  * Handles user registration, login, sessions
+ * Now uses Prisma for database persistence
  */
 
+import prisma from '@/lib/prisma'
 import { UserDto, TransactionType } from '../types/duel.types'
 
 // ============================================
@@ -36,26 +38,10 @@ export interface SessionData {
 }
 
 // ============================================
-// IN-MEMORY STORES (Replace with Prisma + Redis)
+// IN-MEMORY SESSION STORE (sessions only, users in DB)
 // ============================================
 
-interface UserRecord {
-  id: string
-  username: string
-  email: string
-  passwordHash: string
-  telegramId?: string
-  pointsBalance: number
-  totalDeals: number
-  completedDeals: number
-  reliabilityPercent: number
-  createdAt: Date
-  updatedAt: Date
-}
-
-const usersStore: Map<string, UserRecord> = new Map()
-const emailIndex: Map<string, string> = new Map() // email -> id
-const sessionsStore: Map<string, SessionData> = new Map() // token -> session
+const sessionsStore: Map<string, SessionData> = new Map()
 
 // Session settings
 const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
@@ -94,13 +80,6 @@ function generateToken(): string {
 }
 
 /**
- * Generate user ID
- */
-function generateUserId(): string {
-  return `user_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-}
-
-/**
  * Validate email format
  */
 function isValidEmail(email: string): boolean {
@@ -136,7 +115,7 @@ function isValidPassword(password: string): { valid: boolean; message?: string }
 
 export class AuthService {
   /**
-   * Register new user
+   * Register new user - NOW SAVES TO DATABASE
    */
   static async register(request: RegisterRequest): Promise<AuthResponse> {
     const { username, email, password } = request
@@ -160,99 +139,111 @@ export class AuthService {
       return { success: false, error: passwordCheck.message }
     }
 
-    // Check if email already exists
-    if (emailIndex.has(email.toLowerCase())) {
-      return { success: false, error: 'Email already registered' }
-    }
-
-    // Check if username already exists
-    let usernameExists = false
-    usersStore.forEach((user) => {
-      if (user.username.toLowerCase() === username.toLowerCase()) {
-        usernameExists = true
+    try {
+      // Check if email already exists
+      const existingEmail = await prisma.user.findUnique({
+        where: { email: email.toLowerCase() }
+      })
+      if (existingEmail) {
+        return { success: false, error: 'Email already registered' }
       }
-    })
-    if (usernameExists) {
-      return { success: false, error: 'Username already taken' }
-    }
 
-    // Create user
-    const userId = generateUserId()
-    const passwordHash = await hashPassword(password)
-    const now = new Date()
+      // Check if username already exists
+      const existingUsername = await prisma.user.findUnique({
+        where: { username: username }
+      })
+      if (existingUsername) {
+        return { success: false, error: 'Username already taken' }
+      }
 
-    const user: UserRecord = {
-      id: userId,
-      username,
-      email: email.toLowerCase(),
-      passwordHash,
-      pointsBalance: INITIAL_BALANCE,
-      totalDeals: 0,
-      completedDeals: 0,
-      reliabilityPercent: 100.0,
-      createdAt: now,
-      updatedAt: now,
-    }
+      // Create user in database
+      const passwordHash = await hashPassword(password)
+      
+      const user = await prisma.user.create({
+        data: {
+          username,
+          email: email.toLowerCase(),
+          passwordHash,
+          pointsBalance: INITIAL_BALANCE,
+          totalDeals: 0,
+          completedDeals: 0,
+          reliabilityPercent: 100.0,
+        }
+      })
 
-    usersStore.set(userId, user)
-    emailIndex.set(email.toLowerCase(), userId)
+      // Record initial balance transaction
+      await prisma.transaction.create({
+        data: {
+          userId: user.id,
+          type: 'INITIAL_BALANCE',
+          amountPoints: INITIAL_BALANCE,
+          description: 'Welcome bonus',
+        }
+      })
 
-    // Create session
-    const token = generateToken()
-    const session: SessionData = {
-      userId,
-      username,
-      email: email.toLowerCase(),
-      createdAt: Date.now(),
-      expiresAt: Date.now() + SESSION_DURATION_MS,
-    }
-    sessionsStore.set(token, session)
+      // Create session
+      const token = generateToken()
+      const session: SessionData = {
+        userId: user.id,
+        username: user.username,
+        email: user.email || '',
+        createdAt: Date.now(),
+        expiresAt: Date.now() + SESSION_DURATION_MS,
+      }
+      sessionsStore.set(token, session)
 
-    return {
-      success: true,
-      user: this.toUserDto(user),
-      token,
+      return {
+        success: true,
+        user: this.toUserDto(user),
+        token,
+      }
+    } catch (error) {
+      console.error('Registration error:', error)
+      return { success: false, error: 'Registration failed. Please try again.' }
     }
   }
 
   /**
-   * Login user
+   * Login user - NOW READS FROM DATABASE
    */
   static async login(request: LoginRequest): Promise<AuthResponse> {
     const { email, password } = request
 
-    // Find user by email
-    const userId = emailIndex.get(email.toLowerCase())
-    if (!userId) {
-      return { success: false, error: 'Invalid email or password' }
-    }
+    try {
+      // Find user by email
+      const user = await prisma.user.findUnique({
+        where: { email: email.toLowerCase() }
+      })
+      
+      if (!user || !user.passwordHash) {
+        return { success: false, error: 'Invalid email or password' }
+      }
 
-    const user = usersStore.get(userId)
-    if (!user) {
-      return { success: false, error: 'Invalid email or password' }
-    }
+      // Verify password
+      const isValid = await verifyPassword(password, user.passwordHash)
+      if (!isValid) {
+        return { success: false, error: 'Invalid email or password' }
+      }
 
-    // Verify password
-    const isValid = await verifyPassword(password, user.passwordHash)
-    if (!isValid) {
-      return { success: false, error: 'Invalid email or password' }
-    }
+      // Create session
+      const token = generateToken()
+      const session: SessionData = {
+        userId: user.id,
+        username: user.username,
+        email: user.email || '',
+        createdAt: Date.now(),
+        expiresAt: Date.now() + SESSION_DURATION_MS,
+      }
+      sessionsStore.set(token, session)
 
-    // Create session
-    const token = generateToken()
-    const session: SessionData = {
-      userId: user.id,
-      username: user.username,
-      email: user.email,
-      createdAt: Date.now(),
-      expiresAt: Date.now() + SESSION_DURATION_MS,
-    }
-    sessionsStore.set(token, session)
-
-    return {
-      success: true,
-      user: this.toUserDto(user),
-      token,
+      return {
+        success: true,
+        user: this.toUserDto(user),
+        token,
+      }
+    } catch (error) {
+      console.error('Login error:', error)
+      return { success: false, error: 'Login failed. Please try again.' }
     }
   }
 
@@ -279,15 +270,23 @@ export class AuthService {
       return { valid: false }
     }
 
-    const user = usersStore.get(session.userId)
-    if (!user) {
-      sessionsStore.delete(token)
-      return { valid: false }
-    }
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: session.userId }
+      })
+      
+      if (!user) {
+        sessionsStore.delete(token)
+        return { valid: false }
+      }
 
-    return {
-      valid: true,
-      user: this.toUserDto(user),
+      return {
+        valid: true,
+        user: this.toUserDto(user),
+      }
+    } catch (error) {
+      console.error('Session validation error:', error)
+      return { valid: false }
     }
   }
 
@@ -295,8 +294,15 @@ export class AuthService {
    * Get user by ID
    */
   static async getUserById(userId: string): Promise<UserDto | null> {
-    const user = usersStore.get(userId)
-    return user ? this.toUserDto(user) : null
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: userId }
+      })
+      return user ? this.toUserDto(user) : null
+    } catch (error) {
+      console.error('Get user error:', error)
+      return null
+    }
   }
 
   /**
@@ -306,44 +312,43 @@ export class AuthService {
     userId: string,
     updates: { username?: string; telegramId?: string }
   ): Promise<{ success: boolean; user?: UserDto; error?: string }> {
-    const user = usersStore.get(userId)
-    if (!user) {
-      return { success: false, error: 'User not found' }
-    }
+    try {
+      // Validate username if provided
+      if (updates.username) {
+        if (!isValidUsername(updates.username)) {
+          return { 
+            success: false, 
+            error: 'Username must be 3-20 characters, alphanumeric and underscores only' 
+          }
+        }
 
-    // Validate username if provided
-    if (updates.username) {
-      if (!isValidUsername(updates.username)) {
-        return { 
-          success: false, 
-          error: 'Username must be 3-20 characters, alphanumeric and underscores only' 
+        // Check if username taken
+        const existing = await prisma.user.findFirst({
+          where: {
+            username: updates.username,
+            NOT: { id: userId }
+          }
+        })
+        if (existing) {
+          return { success: false, error: 'Username already taken' }
         }
       }
 
-      // Check if username taken
-      let taken = false
-      usersStore.forEach((u) => {
-        if (u.id !== userId && u.username.toLowerCase() === updates.username!.toLowerCase()) {
-          taken = true
+      const user = await prisma.user.update({
+        where: { id: userId },
+        data: {
+          ...(updates.username && { username: updates.username }),
+          ...(updates.telegramId !== undefined && { telegramId: updates.telegramId }),
         }
       })
-      if (taken) {
-        return { success: false, error: 'Username already taken' }
+
+      return {
+        success: true,
+        user: this.toUserDto(user),
       }
-
-      user.username = updates.username
-    }
-
-    if (updates.telegramId !== undefined) {
-      user.telegramId = updates.telegramId
-    }
-
-    user.updatedAt = new Date()
-    usersStore.set(userId, user)
-
-    return {
-      success: true,
-      user: this.toUserDto(user),
+    } catch (error) {
+      console.error('Update profile error:', error)
+      return { success: false, error: 'Failed to update profile' }
     }
   }
 
@@ -355,36 +360,46 @@ export class AuthService {
     currentPassword: string,
     newPassword: string
   ): Promise<{ success: boolean; error?: string }> {
-    const user = usersStore.get(userId)
-    if (!user) {
-      return { success: false, error: 'User not found' }
-    }
-
-    // Verify current password
-    const isValid = await verifyPassword(currentPassword, user.passwordHash)
-    if (!isValid) {
-      return { success: false, error: 'Current password is incorrect' }
-    }
-
-    // Validate new password
-    const passwordCheck = isValidPassword(newPassword)
-    if (!passwordCheck.valid) {
-      return { success: false, error: passwordCheck.message }
-    }
-
-    // Update password
-    user.passwordHash = await hashPassword(newPassword)
-    user.updatedAt = new Date()
-    usersStore.set(userId, user)
-
-    // Invalidate all sessions for this user
-    sessionsStore.forEach((session, token) => {
-      if (session.userId === userId) {
-        sessionsStore.delete(token)
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: userId }
+      })
+      
+      if (!user || !user.passwordHash) {
+        return { success: false, error: 'User not found' }
       }
-    })
 
-    return { success: true }
+      // Verify current password
+      const isValid = await verifyPassword(currentPassword, user.passwordHash)
+      if (!isValid) {
+        return { success: false, error: 'Current password is incorrect' }
+      }
+
+      // Validate new password
+      const passwordCheck = isValidPassword(newPassword)
+      if (!passwordCheck.valid) {
+        return { success: false, error: passwordCheck.message }
+      }
+
+      // Update password
+      const newHash = await hashPassword(newPassword)
+      await prisma.user.update({
+        where: { id: userId },
+        data: { passwordHash: newHash }
+      })
+
+      // Invalidate all sessions for this user
+      sessionsStore.forEach((session, token) => {
+        if (session.userId === userId) {
+          sessionsStore.delete(token)
+        }
+      })
+
+      return { success: true }
+    } catch (error) {
+      console.error('Change password error:', error)
+      return { success: false, error: 'Failed to change password' }
+    }
   }
 
   /**
@@ -399,21 +414,48 @@ export class AuthService {
     currentStreak: number
     reliabilityPercent: number
   } | null> {
-    const user = usersStore.get(userId)
-    if (!user) return null
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: userId }
+      })
+      if (!user) return null
 
-    // Mock stats (in production, calculate from actual duel history)
-    const wins = Math.floor(user.completedDeals * 0.55)
-    const losses = user.completedDeals - wins
-    
-    return {
-      totalDuels: user.completedDeals,
-      wins,
-      losses,
-      winRate: user.completedDeals > 0 ? Math.round((wins / user.completedDeals) * 100) : 0,
-      totalEarnings: user.pointsBalance - INITIAL_BALANCE,
-      currentStreak: Math.floor(Math.random() * 5),
-      reliabilityPercent: user.reliabilityPercent,
+      // Calculate stats from actual matches
+      const matches = await prisma.duelMatch.findMany({
+        where: {
+          OR: [
+            { creatorUserId: userId },
+            { opponentUserId: userId }
+          ],
+          status: 'FINISHED'
+        }
+      })
+
+      let wins = 0
+      let losses = 0
+      
+      for (const match of matches) {
+        if (match.winnerId === userId) {
+          wins++
+        } else if (match.winnerId) {
+          losses++
+        }
+      }
+
+      const totalDuels = wins + losses
+      
+      return {
+        totalDuels,
+        wins,
+        losses,
+        winRate: totalDuels > 0 ? Math.round((wins / totalDuels) * 100) : 0,
+        totalEarnings: user.pointsBalance - INITIAL_BALANCE,
+        currentStreak: 0, // TODO: Calculate actual streak
+        reliabilityPercent: user.reliabilityPercent,
+      }
+    } catch (error) {
+      console.error('Get stats error:', error)
+      return null
     }
   }
 
@@ -426,32 +468,57 @@ export class AuthService {
     type: TransactionType,
     description?: string
   ): Promise<{ success: boolean; newBalance?: number; error?: string }> {
-    const user = usersStore.get(userId)
-    if (!user) {
-      return { success: false, error: 'User not found' }
-    }
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: userId }
+      })
+      
+      if (!user) {
+        return { success: false, error: 'User not found' }
+      }
 
-    const newBalance = user.pointsBalance + amount
-    if (newBalance < 0) {
-      return { success: false, error: 'Insufficient balance' }
-    }
+      const newBalance = user.pointsBalance + amount
+      if (newBalance < 0) {
+        return { success: false, error: 'Insufficient balance' }
+      }
 
-    user.pointsBalance = newBalance
-    user.updatedAt = new Date()
-    usersStore.set(userId, user)
+      // Update balance and create transaction in one transaction
+      await prisma.$transaction([
+        prisma.user.update({
+          where: { id: userId },
+          data: { pointsBalance: newBalance }
+        }),
+        prisma.transaction.create({
+          data: {
+            userId,
+            type,
+            amountPoints: amount,
+            description,
+          }
+        })
+      ])
 
-    // TODO: Create transaction record
-    
-    return {
-      success: true,
-      newBalance,
+      return {
+        success: true,
+        newBalance,
+      }
+    } catch (error) {
+      console.error('Update balance error:', error)
+      return { success: false, error: 'Failed to update balance' }
     }
   }
 
   /**
    * Convert to DTO
    */
-  private static toUserDto(user: UserRecord): UserDto {
+  private static toUserDto(user: {
+    id: string
+    username: string
+    pointsBalance: number
+    totalDeals: number
+    completedDeals: number
+    reliabilityPercent: number
+  }): UserDto {
     return {
       id: user.id,
       username: user.username,
@@ -469,7 +536,11 @@ export class AuthService {
     const demoEmail = 'demo@twos.game'
     
     // Check if already exists
-    if (emailIndex.has(demoEmail)) {
+    const existing = await prisma.user.findUnique({
+      where: { email: demoEmail }
+    })
+    
+    if (existing) {
       return this.login({ email: demoEmail, password: 'demo123' })
     }
 
@@ -480,4 +551,3 @@ export class AuthService {
     })
   }
 }
-
