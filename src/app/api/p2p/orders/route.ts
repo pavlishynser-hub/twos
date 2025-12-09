@@ -6,15 +6,30 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { cookies } from 'next/headers'
 import { P2POrderService } from '@/server/services/p2pOrderService'
 import { ChipService } from '@/server/services/chipService'
+import { AuthService } from '@/server/services/authService'
 import { CreateOrderRequest, CONSTANTS } from '@/server/types'
 
-// Mock current user (replace with auth in production)
-const getCurrentUser = () => ({
-  id: 'user_123',
-  username: 'Player1',
-})
+/**
+ * Get current user from session
+ */
+async function getCurrentUser() {
+  const cookieStore = await cookies()
+  const token = cookieStore.get('auth_token')?.value
+
+  if (!token) {
+    return null
+  }
+
+  const session = await AuthService.validateSession(token)
+  if (!session.valid || !session.user) {
+    return null
+  }
+
+  return session.user
+}
 
 /**
  * POST /api/p2p/orders
@@ -22,8 +37,16 @@ const getCurrentUser = () => ({
  */
 export async function POST(request: NextRequest) {
   try {
+    const user = await getCurrentUser()
+
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: 'Not authenticated' },
+        { status: 401 }
+      )
+    }
+
     const body = await request.json() as CreateOrderRequest
-    const user = getCurrentUser()
 
     // Validation
     if (!body.chipType || !ChipService.isValidChipType(body.chipType)) {
@@ -105,4 +128,3 @@ export async function GET(request: NextRequest) {
     )
   }
 }
-
