@@ -360,10 +360,17 @@ export default function MyDuelsPage() {
                         </button>
                       )}
 
-                      {/* Matched - go to game */}
-                      {offer.status === 'MATCHED' && (
+                      {/* Matched or In Progress - go to game */}
+                      {(offer.status === 'MATCHED' || offer.status === 'IN_PROGRESS') && (
                         <Link href={`/duel/${offer.id}`} className="btn-primary">
                           Play Game →
+                        </Link>
+                      )}
+                      
+                      {/* Waiting for confirm - opponent can go to game page to wait */}
+                      {offer.status === 'WAITING_CREATOR_CONFIRM' && !amCreator && (
+                        <Link href={`/duel/${offer.id}`} className="btn-secondary">
+                          Go to Game →
                         </Link>
                       )}
                     </div>
