@@ -5,16 +5,31 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { cookies } from 'next/headers'
 import { P2POrderService } from '@/server/services/p2pOrderService'
-
-// Mock current user (different from order owner)
-const getCurrentUser = () => ({
-  id: 'user_456',
-  username: 'Opponent',
-})
+import { AuthService } from '@/server/services/authService'
 
 interface RouteParams {
-  params: { orderId: string }
+  params: Promise<{ orderId: string }>
+}
+
+/**
+ * Get current user from session
+ */
+async function getCurrentUser() {
+  const cookieStore = await cookies()
+  const token = cookieStore.get('auth_token')?.value
+
+  if (!token) {
+    return null
+  }
+
+  const session = await AuthService.validateSession(token)
+  if (!session.valid || !session.user) {
+    return null
+  }
+
+  return session.user
 }
 
 /**
@@ -26,10 +41,19 @@ export async function POST(
   { params }: RouteParams
 ) {
   try {
-    const user = getCurrentUser()
+    const user = await getCurrentUser()
+
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: 'Not authenticated' },
+        { status: 401 }
+      )
+    }
+
+    const { orderId } = await params
     
     const result = await P2POrderService.joinOrder(
-      params.orderId,
+      orderId,
       user.id,
       user.username
     )
@@ -57,4 +81,3 @@ export async function POST(
     )
   }
 }
-
