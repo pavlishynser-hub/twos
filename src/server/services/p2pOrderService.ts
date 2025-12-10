@@ -199,6 +199,53 @@ export class P2POrderService {
   }
 
   /**
+   * Confirm order (by owner after opponent joins)
+   */
+  static async confirmOrder(
+    orderId: string,
+    userId: string
+  ): Promise<{ success: boolean; order?: P2POrderDto; error?: string }> {
+    try {
+      const offer = await prisma.duelOffer.findUnique({
+        where: { id: orderId },
+        include: { creator: true },
+      })
+
+      if (!offer) {
+        return { success: false, error: 'Order not found' }
+      }
+
+      if (offer.creatorUserId !== userId) {
+        return { success: false, error: 'Only owner can confirm' }
+      }
+
+      if (offer.status !== DuelOfferStatus.WAITING_CREATOR_CONFIRM) {
+        return { success: false, error: 'Order is not pending confirmation' }
+      }
+
+      // Check if confirmation expired
+      if (offer.expiresAt && new Date() > offer.expiresAt) {
+        return { success: false, error: 'Confirmation timeout expired' }
+      }
+
+      // Update to MATCHED (in progress)
+      const updatedOffer = await prisma.duelOffer.update({
+        where: { id: orderId },
+        data: { status: DuelOfferStatus.MATCHED },
+        include: { creator: true },
+      })
+
+      return {
+        success: true,
+        order: this.toDto(updatedOffer, updatedOffer.creator.username),
+      }
+    } catch (error) {
+      console.error('Error confirming order:', error)
+      return { success: false, error: 'Failed to confirm order' }
+    }
+  }
+
+  /**
    * Cancel order (by owner, only if OPEN)
    */
   static async cancelOrder(
