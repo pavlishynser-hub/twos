@@ -1,17 +1,12 @@
 /**
- * Confirm Order API
- * 
- * POST /api/p2p/orders/[orderId]/confirm - Confirm matched order (owner only)
+ * My Offers API
+ * GET /api/p2p/my-offers - Get current user's offers
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
-import { P2POrderService } from '@/server/services/p2pOrderService'
+import prisma from '@/lib/prisma'
 import { AuthService } from '@/server/services/authService'
-
-interface RouteParams {
-  params: Promise<{ orderId: string }>
-}
 
 /**
  * Get current user from session
@@ -33,13 +28,10 @@ async function getCurrentUser() {
 }
 
 /**
- * POST /api/p2p/orders/[orderId]/confirm
- * Owner confirms the duel after opponent joins
+ * GET /api/p2p/my-offers
+ * Get all offers where user is creator or opponent
  */
-export async function POST(
-  request: NextRequest,
-  { params }: RouteParams
-) {
+export async function GET(request: NextRequest) {
   try {
     const user = await getCurrentUser()
 
@@ -50,30 +42,30 @@ export async function POST(
       )
     }
 
-    const { orderId } = await params
-    
-    // Confirm order
-    const result = await P2POrderService.confirmOrder(orderId, user.id)
-
-    if (!result.success) {
-      return NextResponse.json(
-        { success: false, error: result.error },
-        { status: 400 }
-      )
-    }
+    // Get offers where user is creator
+    const offers = await prisma.duelOffer.findMany({
+      where: {
+        creatorUserId: user.id,
+      },
+      include: {
+        creator: {
+          select: { username: true }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    })
 
     return NextResponse.json({
       success: true,
-      data: {
-        order: result.order,
-        message: 'Duel confirmed! Game started.',
-      },
+      data: offers,
     })
   } catch (error) {
-    console.error('Error confirming order:', error)
+    console.error('Error fetching my offers:', error)
     return NextResponse.json(
       { success: false, error: 'Internal server error' },
       { status: 500 }
     )
   }
 }
+
