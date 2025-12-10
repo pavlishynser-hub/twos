@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { clsx } from 'clsx'
 import Link from 'next/link'
 import { NumberInput } from '@/components/NumberInput'
+import { useAuth } from '@/contexts/AuthContext'
 
-type DuelPhase = 'loading' | 'input' | 'waiting' | 'countdown' | 'resolving' | 'result'
+type DuelPhase = 'loading' | 'waiting_opponent' | 'input' | 'waiting' | 'countdown' | 'resolving' | 'result'
 
 interface PlayerState {
   id: string
@@ -28,37 +29,31 @@ interface RoundResult {
   }
 }
 
-// Mock players
-const mockMe: PlayerState = {
-  id: 'user_me',
-  username: 'You',
-  avatar: '👤',
-  number: null,
-  distance: null,
-  isReady: false,
-}
-
-const mockOpponent: PlayerState = {
-  id: 'user_opponent',
-  username: 'ShadowKing',
-  avatar: '🎭',
-  number: null,
-  distance: null,
-  isReady: false,
+interface OfferData {
+  id: string
+  creatorUserId: string
+  opponentUserId: string | null
+  chipType: string
+  chipPointsValue: number
+  gamesCount: number
+  status: string
+  creator: { id: string; username: string }
 }
 
 export default function DuelPage() {
   const router = useRouter()
   const params = useParams()
   const duelId = params.id as string
+  const { user, isAuthenticated } = useAuth()
 
   const [phase, setPhase] = useState<DuelPhase>('loading')
   const [countdown, setCountdown] = useState(3)
   const [currentRound, setCurrentRound] = useState(1)
-  const [totalRounds] = useState(3)
+  const [totalRounds, setTotalRounds] = useState(3)
   
-  const [me, setMe] = useState<PlayerState>(mockMe)
-  const [opponent, setOpponent] = useState<PlayerState>(mockOpponent)
+  const [offer, setOffer] = useState<OfferData | null>(null)
+  const [me, setMe] = useState<PlayerState | null>(null)
+  const [opponent, setOpponent] = useState<PlayerState | null>(null)
   const [result, setResult] = useState<RoundResult | null>(null)
   
   const [scores, setScores] = useState({ me: 0, opponent: 0 })
@@ -69,29 +64,78 @@ export default function DuelPage() {
     opponentNumber: number
     randomNumber: number
   }>>([])
+  const [error, setError] = useState<string | null>(null)
 
-  // Initialize duel
+  // Load offer data
+  const loadOffer = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/p2p/orders/${duelId}`)
+      const data = await response.json()
+      
+      if (data.success && data.data) {
+        const offerData = data.data
+        setOffer(offerData)
+        setTotalRounds(offerData.gamesPlanned || 3)
+        
+        // Determine who is who
+        const isCreator = user?.id === offerData.owner?.id
+        
+        // Set me
+        setMe({
+          id: user?.id || '',
+          username: user?.username || 'You',
+          avatar: isCreator ? '👤' : '🎭',
+          number: null,
+          distance: null,
+          isReady: false,
+        })
+        
+        // Set opponent
+        // If I'm creator, opponent is the acceptor
+        // If I'm acceptor, opponent is the creator
+        setOpponent({
+          id: isCreator ? (offerData.opponentUserId || 'opponent') : offerData.owner?.id,
+          username: isCreator ? 'Opponent' : (offerData.owner?.username || 'Creator'),
+          avatar: isCreator ? '🎭' : '👤',
+          number: null,
+          distance: null,
+          isReady: false,
+        })
+        
+        setPhase('input')
+      } else {
+        setError('Failed to load duel')
+      }
+    } catch (err) {
+      console.error('Error loading offer:', err)
+      setError('Network error')
+    }
+  }, [duelId, user])
+
+  // Initialize
   useEffect(() => {
-    const timer = setTimeout(() => setPhase('input'), 1500)
-    return () => clearTimeout(timer)
-  }, [])
+    if (isAuthenticated && user) {
+      loadOffer()
+    }
+  }, [isAuthenticated, user, loadOffer])
 
   // Handle my number change
   const handleMyNumberChange = (num: number | null) => {
-    setMe(prev => ({ ...prev, number: num }))
+    if (!me) return
+    setMe(prev => prev ? { ...prev, number: num } : null)
   }
 
   // Submit my number and wait for opponent
   const handleSubmitNumber = () => {
-    if (me.number === null) return
+    if (!me || me.number === null) return
     
-    setMe(prev => ({ ...prev, isReady: true }))
+    setMe(prev => prev ? { ...prev, isReady: true } : null)
     setPhase('waiting')
     
-    // Simulate opponent submitting (random number between 0-999999)
+    // For now, simulate opponent submitting (in real P2P, this would be via websocket/polling)
     setTimeout(() => {
       const opponentNumber = Math.floor(Math.random() * 1000000)
-      setOpponent(prev => ({ ...prev, number: opponentNumber, isReady: true }))
+      setOpponent(prev => prev ? { ...prev, number: opponentNumber, isReady: true } : null)
       
       // Start countdown
       setTimeout(() => {
@@ -117,6 +161,8 @@ export default function DuelPage() {
 
   // Resolve duel
   const resolveDuel = async () => {
+    if (!me || !opponent) return
+
     try {
       const response = await fetch('/api/duel/resolve', {
         method: 'POST',
@@ -137,8 +183,8 @@ export default function DuelPage() {
         const { randomNumber, playerA, playerB, winnerId, isDraw, verification } = data.data
         
         // Update distances
-        setMe(prev => ({ ...prev, distance: playerA.distance }))
-        setOpponent(prev => ({ ...prev, distance: playerB.distance }))
+        setMe(prev => prev ? { ...prev, distance: playerA.distance } : null)
+        setOpponent(prev => prev ? { ...prev, distance: playerB.distance } : null)
         
         // Set result
         setResult({
@@ -152,9 +198,11 @@ export default function DuelPage() {
           },
         })
 
-        // Update scores
+        // Update scores - compare with MY real ID
         if (!isDraw) {
           const winnerIsMe = winnerId === me.id
+          console.log(`Winner determination: winnerId=${winnerId}, me.id=${me.id}, winnerIsMe=${winnerIsMe}`)
+          
           setScores(prev => ({
             me: prev.me + (winnerIsMe ? 1 : 0),
             opponent: prev.opponent + (winnerIsMe ? 0 : 1),
@@ -183,18 +231,24 @@ export default function DuelPage() {
         }
         
         setTimeout(() => setPhase('result'), 1500)
+      } else {
+        throw new Error(data.error || 'Resolution failed')
       }
     } catch (error) {
       console.error('Resolution error:', error)
-      // Fallback
+      // Fallback to local calculation
+      if (!me || !opponent) return
+      
       const randomNumber = Math.floor(Math.random() * 1000000)
       const distanceMe = Math.abs(me.number! - randomNumber)
       const distanceOpp = Math.abs(opponent.number! - randomNumber)
-      const winnerIsMe = distanceMe < distanceOpp
       const isDraw = distanceMe === distanceOpp
+      const winnerIsMe = distanceMe < distanceOpp
       
-      setMe(prev => ({ ...prev, distance: distanceMe }))
-      setOpponent(prev => ({ ...prev, distance: distanceOpp }))
+      setMe(prev => prev ? { ...prev, distance: distanceMe } : null)
+      setOpponent(prev => prev ? { ...prev, distance: distanceOpp } : null)
+      
+      const winnerId = isDraw ? null : (winnerIsMe ? me.id : opponent.id)
       
       if (!isDraw) {
         setScores(prev => ({
@@ -203,8 +257,19 @@ export default function DuelPage() {
         }))
       }
       
-      setResult({ randomNumber, winnerId: isDraw ? null : (winnerIsMe ? me.id : opponent.id), isDraw, verification: { seedSlice: 'fallback', timeSlot: 0, formula: '' } })
-      setRoundHistory(prev => [...prev, { round: currentRound, winner: isDraw ? 'draw' : (winnerIsMe ? 'me' : 'opponent'), myNumber: me.number!, opponentNumber: opponent.number!, randomNumber }])
+      setResult({ 
+        randomNumber, 
+        winnerId, 
+        isDraw, 
+        verification: { seedSlice: 'local', timeSlot: 0, formula: 'local fallback' } 
+      })
+      setRoundHistory(prev => [...prev, { 
+        round: currentRound, 
+        winner: isDraw ? 'draw' : (winnerIsMe ? 'me' : 'opponent'), 
+        myNumber: me.number!, 
+        opponentNumber: opponent.number!, 
+        randomNumber 
+      }])
       setTimeout(() => setPhase('result'), 1500)
     }
   }
@@ -213,8 +278,8 @@ export default function DuelPage() {
   const handleNextRound = () => {
     if (currentRound >= totalRounds) return
     setCurrentRound(prev => prev + 1)
-    setMe(prev => ({ ...prev, number: null, distance: null, isReady: false }))
-    setOpponent(prev => ({ ...prev, number: null, distance: null, isReady: false }))
+    setMe(prev => prev ? { ...prev, number: null, distance: null, isReady: false } : null)
+    setOpponent(prev => prev ? { ...prev, number: null, distance: null, isReady: false } : null)
     setResult(null)
     setPhase('input')
   }
@@ -225,13 +290,51 @@ export default function DuelPage() {
 
   // Generate verification URL
   const getVerificationUrl = () => {
-    if (!result?.verification) return '/verify'
+    if (!result?.verification || !me || !opponent) return '/verify'
     return `/verify?duelId=${duelId}_round_${currentRound}&round=${currentRound}&timeSlot=${result.verification.timeSlot}&playerA=${me.id}&playerANumber=${me.number}&playerB=${opponent.id}&playerBNumber=${opponent.number}&seedSlice=${result.verification.seedSlice}&random=${result.randomNumber}`
+  }
+
+  // Loading / Not authenticated
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-gray-400 mb-4">Please login to play</p>
+          <Link href="/login" className="btn-primary">Login</Link>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-accent-danger mb-4">{error}</p>
+          <Link href="/offers" className="btn-primary">Back to Offers</Link>
+        </div>
+      </div>
+    )
+  }
+
+  if (!me || !opponent) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="w-16 h-16 mx-auto rounded-full border-4 border-accent-primary border-t-transparent animate-spin" />
+      </div>
+    )
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
       <div className="max-w-2xl w-full">
+        {/* Debug info (hidden in production) */}
+        {process.env.NODE_ENV === 'development' && (
+          <div className="mb-4 p-2 bg-dark-800 rounded text-xs text-gray-500">
+            My ID: {me.id} | Opponent ID: {opponent.id}
+          </div>
+        )}
+
         {/* Provably Fair Badge */}
         <div className="flex items-center justify-center gap-2 mb-4">
           <div className="flex items-center gap-2 px-4 py-2 bg-accent-success/10 border border-accent-success/30 rounded-full">
@@ -246,6 +349,11 @@ export default function DuelPage() {
           <span className="text-sm text-gray-400">
             Round {currentRound} of {totalRounds}
           </span>
+          {offer && (
+            <span className="ml-4 text-sm text-accent-warning">
+              {offer.chipPointsValue} pts/round
+            </span>
+          )}
         </div>
 
         {/* Score Board */}
@@ -500,10 +608,10 @@ export default function DuelPage() {
               {/* Actions */}
               <div className="flex gap-3">
                 <button 
-                  onClick={() => router.push('/')}
+                  onClick={() => router.push('/my-duels')}
                   className="flex-1 btn-secondary"
                 >
-                  Back to Lobby
+                  Back to My Duels
                 </button>
                 {!isDuelFinished && (
                   <button 
@@ -514,12 +622,9 @@ export default function DuelPage() {
                   </button>
                 )}
                 {isDuelFinished && (
-                  <button 
-                    onClick={() => window.location.reload()}
-                    className="flex-1 btn-primary"
-                  >
-                    Play Again
-                  </button>
+                  <Link href="/offers" className="flex-1 btn-primary text-center">
+                    New Duel
+                  </Link>
                 )}
               </div>
             </div>
