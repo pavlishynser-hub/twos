@@ -136,6 +136,8 @@ export class P2POrderService {
     oderId: string,
     username: string
   ): Promise<{ success: boolean; order?: P2POrderDto; expiresAt?: string; error?: string }> {
+    console.log('joinOrder called with:', { orderId, oderId, username })
+    
     try {
       const offer = await prisma.duelOffer.findUnique({
         where: { id: orderId },
@@ -155,12 +157,14 @@ export class P2POrderService {
       }
 
       // Check opponent balance
+      console.log('Looking for user with id:', oderId)
       const opponent = await prisma.user.findUnique({
         where: { id: oderId }
       })
+      console.log('Found opponent:', opponent)
 
       if (!opponent) {
-        return { success: false, error: 'User not found' }
+        return { success: false, error: `User not found: ${oderId}` }
       }
 
       const totalStake = offer.chipPointsValue * offer.gamesCount
