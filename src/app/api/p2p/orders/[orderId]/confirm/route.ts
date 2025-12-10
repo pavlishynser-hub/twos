@@ -6,9 +6,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
+import { P2POrderService } from '@/server/services/p2pOrderService'
 import { AuthService } from '@/server/services/authService'
-import prisma from '@/lib/prisma'
-import { DuelOfferStatus } from '@prisma/client'
 
 interface RouteParams {
   params: Promise<{ orderId: string }>
@@ -42,9 +41,8 @@ export async function POST(
   { params }: RouteParams
 ) {
   try {
-    const { orderId } = await params
     const user = await getCurrentUser()
-    
+
     if (!user) {
       return NextResponse.json(
         { success: false, error: 'Not authenticated' },
@@ -52,7 +50,10 @@ export async function POST(
       )
     }
 
-    console.log(`[Confirm] User ${user.id} confirming order ${orderId}`)
+    const { orderId } = await params
+    
+    // Confirm order
+    const result = await P2POrderService.confirmOrder(orderId, user.id)
 
     // Get the offer
     const offer = await prisma.duelOffer.findUnique({
@@ -69,40 +70,11 @@ export async function POST(
       )
     }
 
-    // Check user is creator
-    if (offer.creatorUserId !== user.id) {
-      return NextResponse.json(
-        { success: false, error: 'Only creator can confirm' },
-        { status: 403 }
-      )
-    }
-
-    // Check status
-    if (offer.status !== DuelOfferStatus.WAITING_CREATOR_CONFIRM) {
-      return NextResponse.json(
-        { success: false, error: `Cannot confirm order in status: ${offer.status}` },
-        { status: 400 }
-      )
-    }
-
-    // Update status to MATCHED (ready to play)
-    const updatedOffer = await prisma.duelOffer.update({
-      where: { id: orderId },
-      data: { 
-        status: DuelOfferStatus.MATCHED,
-      },
-      include: {
-        creator: { select: { id: true, username: true } },
-      }
-    })
-
-    console.log(`[Confirm] Order ${orderId} confirmed successfully`)
-
     return NextResponse.json({
       success: true,
       data: {
-        offer: updatedOffer,
-        message: 'Duel confirmed! Ready to play.',
+        order: result.order,
+        message: 'Duel confirmed! Game started.',
       },
     })
   } catch (error) {
