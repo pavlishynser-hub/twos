@@ -291,6 +291,17 @@ export class P2POrderService {
   }
 
   /**
+   * Update order after game completion
+   */
+  static async onGameCompleted(
+    orderId: string,
+    gameIndex: number
+  ): Promise<void> {
+    // For now just log - full implementation later
+    console.log(`Game ${gameIndex} completed for order ${orderId}`)
+  }
+
+  /**
    * Convert DB record to DTO
    */
   private static toDto(offer: any, username: string): P2POrderDto {
