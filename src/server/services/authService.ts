@@ -191,19 +191,24 @@ export class AuthService {
    */
   static async login(request: LoginRequest): Promise<AuthResponse> {
     const { email, password } = request
+    console.log('AuthService.login called for:', email)
 
     try {
       // Find user by email
+      console.log('Looking for user with email:', email.toLowerCase())
       const user = await prisma.user.findUnique({
         where: { email: email.toLowerCase() }
       })
+      console.log('User found:', user ? 'yes' : 'no', user?.id)
       
       if (!user || !user.passwordHash) {
+        console.log('User not found or no password hash')
         return { success: false, error: 'Invalid email or password' }
       }
 
       // Verify password
       const isValid = await verifyPassword(password, user.passwordHash)
+      console.log('Password valid:', isValid)
       if (!isValid) {
         return { success: false, error: 'Invalid email or password' }
       }
@@ -212,6 +217,7 @@ export class AuthService {
       const token = generateToken()
       const expiresAt = new Date(Date.now() + SESSION_DURATION_MS)
 
+      console.log('Creating session for user:', user.id)
       await prisma.session.create({
         data: {
           token,
@@ -219,6 +225,7 @@ export class AuthService {
           expiresAt,
         }
       })
+      console.log('Session created successfully')
 
       return {
         success: true,
