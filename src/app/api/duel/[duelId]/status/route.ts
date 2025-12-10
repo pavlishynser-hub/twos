@@ -66,6 +66,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     })
 
     if (!match) {
+      console.log(`[Status] No match found for offer ${duelId}`)
       return NextResponse.json({
         success: true,
         data: {
@@ -86,6 +87,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     })
 
     if (!game) {
+      console.log(`[Status] No game found for match ${match.id} round ${roundNumber}`)
       return NextResponse.json({
         success: true,
         data: {
@@ -114,8 +116,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const mySubmitted = isCreator ? creatorSubmitted : opponentSubmitted
     const theirSubmitted = isCreator ? opponentSubmitted : creatorSubmitted
 
-    // If both ready, calculate result
+    console.log(`[Status] Game ${game.id}: creator=${creatorSubmitted}, opponent=${opponentSubmitted}, bothReady=${bothReady}, gameStatus=${game.status}`)
+
+    // If both ready and game not finished yet, calculate result
     if (bothReady && game.status !== 'FINISHED') {
+      console.log(`[Status] Both ready! Calculating result...`)
+      
       const timeSlot = calculateTimeSlot()
 
       const params: DuelRoundParams = {
@@ -133,6 +139,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       }
 
       const result = determineWinner(params)
+
+      console.log(`[Status] Result: random=${result.randomNumber}, winner=${result.winnerId}, isDraw=${result.isDraw}`)
 
       // Update game with result
       await prisma.duelGame.update({
@@ -169,6 +177,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     // If game already finished, return stored result
     if (game.status === 'FINISHED') {
+      console.log(`[Status] Game already finished, returning stored result`)
       return NextResponse.json({
         success: true,
         data: {
@@ -180,6 +189,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             creatorNumber: metadata.creatorNumber,
             opponentNumber: metadata.opponentNumber,
             winnerId: game.winnerUserId,
+            // Re-calculate for full data
+            randomNumber: 0, // Would need to store this
+            creatorDistance: 0,
+            opponentDistance: 0,
+            isDraw: game.winnerUserId === null,
           },
         },
       })
@@ -195,8 +209,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       },
     })
   } catch (error) {
-    console.error('Status error:', error)
+    console.error('[Status] Error:', error)
     return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 })
   }
 }
-

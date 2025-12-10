@@ -35,6 +35,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const body = await request.json()
     const { roundNumber, playerNumber } = body
 
+    console.log(`[Submit] User ${user.id} submitting number ${playerNumber} for duel ${duelId} round ${roundNumber}`)
+
     // Validate number
     if (!Number.isInteger(playerNumber) || playerNumber < 0 || playerNumber > 999999) {
       return NextResponse.json({ success: false, error: 'Invalid number (0-999999)' }, { status: 400 })
@@ -49,6 +51,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, error: 'Duel not found' }, { status: 404 })
     }
 
+    console.log(`[Submit] Offer found: creator=${offer.creatorUserId}, opponent=${offer.opponentUserId}`)
+
     // Check user is participant
     const isCreator = offer.creatorUserId === user.id
     const isOpponent = offer.opponentUserId === user.id
@@ -57,34 +61,23 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, error: 'You are not in this duel' }, { status: 403 })
     }
 
-    // Create or update game record
-    const gameKey = `${duelId}_round_${roundNumber}`
-    
-    // Try to find existing game or create new one
-    let game = await prisma.duelGame.findFirst({
-      where: {
-        matchId: duelId,
-        roundIndex: roundNumber,
-      },
-    })
+    // Check opponent exists
+    if (!offer.opponentUserId) {
+      return NextResponse.json({ success: false, error: 'No opponent in this duel yet' }, { status: 400 })
+    }
 
-    // For simplicity, store in a simple key-value approach
-    // We'll use the DuelGame table with custom fields via metadata
-    // But since schema doesn't have all fields, use a simpler approach:
-    // Store submissions in memory with Redis-like approach using metadata field
-
-    // Get or create match first
+    // Get or create match
     let match = await prisma.duelMatch.findFirst({
       where: { offerId: duelId },
     })
 
     if (!match) {
-      // Create match
+      console.log(`[Submit] Creating new match for offer ${duelId}`)
       match = await prisma.duelMatch.create({
         data: {
           offerId: duelId,
           creatorUserId: offer.creatorUserId,
-          opponentUserId: offer.opponentUserId!,
+          opponentUserId: offer.opponentUserId,
           gamesPlanned: offer.gamesCount,
           gamesPlayed: 0,
           status: 'IN_PROGRESS',
@@ -92,8 +85,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       })
     }
 
-    // Get or create game
+    // Get or create game for this round
+    let game = await prisma.duelGame.findFirst({
+      where: {
+        matchId: match.id,
+        roundIndex: roundNumber,
+      },
+    })
+
     if (!game) {
+      console.log(`[Submit] Creating new game for match ${match.id} round ${roundNumber}`)
       game = await prisma.duelGame.create({
         data: {
           matchId: match.id,
@@ -103,21 +104,28 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       })
     }
 
-    // Update game with player's number using metadata
-    // Store as JSON: { creatorNumber, opponentNumber, creatorSubmittedAt, opponentSubmittedAt }
-    const currentMetadata = (game as any).metadata || {}
-    const metadata = typeof currentMetadata === 'string' ? JSON.parse(currentMetadata) : currentMetadata
-    
+    // Parse existing metadata from roundSecret
+    let metadata: any = {}
+    if (game.roundSecret) {
+      try {
+        metadata = JSON.parse(game.roundSecret)
+      } catch (e) {
+        metadata = {}
+      }
+    }
+
+    // Update with player's number
     if (isCreator) {
       metadata.creatorNumber = playerNumber
       metadata.creatorSubmittedAt = new Date().toISOString()
+      metadata.creatorId = user.id
     } else {
       metadata.opponentNumber = playerNumber
       metadata.opponentSubmittedAt = new Date().toISOString()
+      metadata.opponentId = user.id
     }
 
-    // Update game - but DuelGame doesn't have metadata field
-    // Let's use roundSecret field to store JSON temporarily
+    // Save to roundSecret field
     await prisma.duelGame.update({
       where: { id: game.id },
       data: {
@@ -127,6 +135,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     // Check if both submitted
     const bothSubmitted = metadata.creatorNumber !== undefined && metadata.opponentNumber !== undefined
+
+    console.log(`[Submit] Updated game ${game.id}: creatorNum=${metadata.creatorNumber}, opponentNum=${metadata.opponentNumber}, bothReady=${bothSubmitted}`)
 
     return NextResponse.json({
       success: true,
@@ -138,8 +148,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       },
     })
   } catch (error) {
-    console.error('Submit error:', error)
+    console.error('[Submit] Error:', error)
     return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 })
   }
 }
-
