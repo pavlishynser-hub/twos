@@ -161,6 +161,9 @@ model DuelOffer {
   creatorUserId   String
   creator         User            @relation("OfferCreator", fields: [creatorUserId], references: [id])
   
+  // Opponent (set when someone accepts)
+  opponentUserId  String?
+  
   // Bet configuration
   chipType        ChipType
   chipPointsValue Int             // 5, 10, 25, or 50
@@ -178,6 +181,7 @@ model DuelOffer {
   
   @@index([status])
   @@index([creatorUserId])
+  @@index([opponentUserId])
 }
 
 // ============================================

@@ -133,10 +133,10 @@ export class P2POrderService {
    */
   static async joinOrder(
     orderId: string,
-    oderId: string,
+    opponentUserId: string,
     username: string
   ): Promise<{ success: boolean; order?: P2POrderDto; expiresAt?: string; error?: string }> {
-    console.log('joinOrder called with:', { orderId, oderId, username })
+    console.log('joinOrder called with:', { orderId, opponentUserId, username })
     
     try {
       const offer = await prisma.duelOffer.findUnique({
@@ -152,19 +152,19 @@ export class P2POrderService {
         return { success: false, error: 'Order is not available' }
       }
 
-      if (offer.creatorUserId === oderId) {
+      if (offer.creatorUserId === opponentUserId) {
         return { success: false, error: 'Cannot join your own order' }
       }
 
       // Check opponent balance
-      console.log('Looking for user with id:', oderId)
+      console.log('Looking for user with id:', opponentUserId)
       const opponent = await prisma.user.findUnique({
-        where: { id: oderId }
+        where: { id: opponentUserId }
       })
       console.log('Found opponent:', opponent)
 
       if (!opponent) {
-        return { success: false, error: `User not found: ${oderId}` }
+        return { success: false, error: `User not found: ${opponentUserId}` }
       }
 
       const totalStake = offer.chipPointsValue * offer.gamesCount
@@ -181,12 +181,13 @@ export class P2POrderService {
           where: { id: orderId },
           data: {
             status: DuelOfferStatus.WAITING_CREATOR_CONFIRM,
+            opponentUserId: opponentUserId,
             expiresAt,
           },
           include: { creator: true },
         }),
         prisma.user.update({
-          where: { id: oderId },
+          where: { id: opponentUserId },
           data: { pointsBalance: { decrement: totalStake } }
         }),
       ])
@@ -254,7 +255,7 @@ export class P2POrderService {
    */
   static async cancelOrder(
     orderId: string,
-    oderId: string
+    userId: string
   ): Promise<{ success: boolean; error?: string }> {
     try {
       const offer = await prisma.duelOffer.findUnique({
@@ -265,7 +266,7 @@ export class P2POrderService {
         return { success: false, error: 'Order not found' }
       }
 
-      if (offer.creatorUserId !== oderId) {
+      if (offer.creatorUserId !== userId) {
         return { success: false, error: 'Only owner can cancel' }
       }
 
@@ -282,7 +283,7 @@ export class P2POrderService {
           data: { status: DuelOfferStatus.CANCELLED },
         }),
         prisma.user.update({
-          where: { id: oderId },
+          where: { id: userId },
           data: { pointsBalance: { increment: refund } }
         }),
       ])

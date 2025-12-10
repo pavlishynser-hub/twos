@@ -1,21 +1,36 @@
 /**
- * Single P2P Order API
+ * Single Order API
  * 
  * GET /api/p2p/orders/[orderId] - Get order details
  * DELETE /api/p2p/orders/[orderId] - Cancel order
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { cookies } from 'next/headers'
 import { P2POrderService } from '@/server/services/p2pOrderService'
-
-// Mock current user
-const getCurrentUser = () => ({
-  id: 'user_123',
-  username: 'Player1',
-})
+import { AuthService } from '@/server/services/authService'
 
 interface RouteParams {
-  params: { orderId: string }
+  params: Promise<{ orderId: string }>
+}
+
+/**
+ * Get current user from session
+ */
+async function getCurrentUser() {
+  const cookieStore = await cookies()
+  const token = cookieStore.get('auth_token')?.value
+
+  if (!token) {
+    return null
+  }
+
+  const session = await AuthService.validateSession(token)
+  if (!session.valid || !session.user) {
+    return null
+  }
+
+  return session.user
 }
 
 /**
@@ -27,7 +42,8 @@ export async function GET(
   { params }: RouteParams
 ) {
   try {
-    const order = await P2POrderService.getOrder(params.orderId)
+    const { orderId } = await params
+    const order = await P2POrderService.getOrder(orderId)
 
     if (!order) {
       return NextResponse.json(
@@ -51,15 +67,24 @@ export async function GET(
 
 /**
  * DELETE /api/p2p/orders/[orderId]
- * Cancel order (only if OPEN and by owner)
+ * Cancel order (owner only)
  */
 export async function DELETE(
   request: NextRequest,
   { params }: RouteParams
 ) {
   try {
-    const user = getCurrentUser()
-    const result = await P2POrderService.cancelOrder(params.orderId, user.id)
+    const user = await getCurrentUser()
+
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: 'Not authenticated' },
+        { status: 401 }
+      )
+    }
+
+    const { orderId } = await params
+    const result = await P2POrderService.cancelOrder(orderId, user.id)
 
     if (!result.success) {
       return NextResponse.json(
@@ -80,4 +105,3 @@ export async function DELETE(
     )
   }
 }
-
