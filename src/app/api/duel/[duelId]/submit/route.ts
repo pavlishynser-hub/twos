@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import prisma from '@/lib/prisma'
 import { AuthService } from '@/server/services/authService'
+import { DuelMatchStatus, DuelGameStatus } from '@prisma/client'
 
 interface RouteParams {
   params: Promise<{ duelId: string }>
@@ -80,7 +81,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           opponentUserId: offer.opponentUserId,
           gamesPlanned: offer.gamesCount,
           gamesPlayed: 0,
-          status: 'IN_PROGRESS',
+          status: DuelMatchStatus.IN_PROGRESS,
         },
       })
     }
@@ -99,7 +100,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         data: {
           matchId: match.id,
           roundIndex: roundNumber,
-          status: 'IN_PROGRESS',
+          status: DuelGameStatus.IN_PROGRESS,
         },
       })
     }

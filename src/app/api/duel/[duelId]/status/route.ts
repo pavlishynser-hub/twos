@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import prisma from '@/lib/prisma'
 import { AuthService } from '@/server/services/authService'
+import { DuelGameStatus } from '@prisma/client'
 import { 
   determineWinner, 
   calculateTimeSlot,
@@ -119,7 +120,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     console.log(`[Status] Game ${game.id}: creator=${creatorSubmitted}, opponent=${opponentSubmitted}, bothReady=${bothReady}, gameStatus=${game.status}`)
 
     // If both ready and game not finished yet, calculate result
-    if (bothReady && game.status !== 'FINISHED') {
+    if (bothReady && game.status !== DuelGameStatus.FINISHED) {
       console.log(`[Status] Both ready! Calculating result...`)
       
       const timeSlot = calculateTimeSlot()
@@ -146,7 +147,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       await prisma.duelGame.update({
         where: { id: game.id },
         data: {
-          status: 'FINISHED',
+          status: DuelGameStatus.FINISHED,
           winnerUserId: result.winnerId,
           roundHashCommit: result.verification.seedSlice,
           finishedAt: new Date(),
@@ -176,7 +177,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     // If game already finished, return stored result
-    if (game.status === 'FINISHED') {
+    if (game.status === DuelGameStatus.FINISHED) {
       console.log(`[Status] Game already finished, returning stored result`)
       return NextResponse.json({
         success: true,
