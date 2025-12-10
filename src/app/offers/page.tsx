@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { clsx } from 'clsx'
-import Link from 'next/link'
+import { useAuth } from '@/contexts/AuthContext'
 
 // Types
 type ChipType = 'SMILE' | 'HEART' | 'FIRE' | 'RING'
@@ -14,6 +14,20 @@ interface ChipConfig {
   name: string
 }
 
+interface Offer {
+  id: string
+  owner: {
+    id: string
+    username: string
+    reliabilityCoefficient: number
+  }
+  chipType: ChipType
+  chipValue: number
+  gamesPlanned: number
+  status: string
+  createdAt: string
+}
+
 const CHIPS: ChipConfig[] = [
   { type: 'SMILE', value: 5, emoji: '😊', name: 'Smile' },
   { type: 'HEART', value: 10, emoji: '❤️', name: 'Heart' },
@@ -21,35 +35,105 @@ const CHIPS: ChipConfig[] = [
   { type: 'RING', value: 50, emoji: '💍', name: 'Ring' },
 ]
 
-// Mock offers
-const mockOffers = [
-  { id: '1', creator: { username: 'ShadowKing', reliability: 95 }, chipType: 'RING' as ChipType, chipValue: 50, gamesCount: 3, createdAt: new Date() },
-  { id: '2', creator: { username: 'NightHunter', reliability: 88 }, chipType: 'FIRE' as ChipType, chipValue: 25, gamesCount: 2, createdAt: new Date() },
-  { id: '3', creator: { username: 'CryptoWolf', reliability: 99 }, chipType: 'HEART' as ChipType, chipValue: 10, gamesCount: 5, createdAt: new Date() },
-  { id: '4', creator: { username: 'PhantomX', reliability: 72 }, chipType: 'SMILE' as ChipType, chipValue: 5, gamesCount: 2, createdAt: new Date() },
-]
-
 export default function OffersPage() {
+  const { user, isAuthenticated } = useAuth()
+  const [offers, setOffers] = useState<Offer[]>([])
+  const [loading, setLoading] = useState(true)
+  const [creating, setCreating] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [selectedChip, setSelectedChip] = useState<ChipType>('HEART')
   const [gamesCount, setGamesCount] = useState(2)
   const [filterChip, setFilterChip] = useState<ChipType | 'ALL'>('ALL')
+  const [error, setError] = useState<string | null>(null)
+
+  // Load offers from API
+  useEffect(() => {
+    loadOffers()
+  }, [])
+
+  const loadOffers = async () => {
+    try {
+      setLoading(true)
+      const response = await fetch('/api/p2p/orders?status=OPEN')
+      const data = await response.json()
+      
+      if (data.success) {
+        setOffers(data.data || [])
+      } else {
+        console.error('Failed to load offers:', data.error)
+      }
+    } catch (err) {
+      console.error('Error loading offers:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const filteredOffers = filterChip === 'ALL' 
-    ? mockOffers 
-    : mockOffers.filter(o => o.chipType === filterChip)
+    ? offers 
+    : offers.filter(o => o.chipType === filterChip)
 
   const getChipConfig = (type: ChipType) => CHIPS.find(c => c.type === type)!
 
-  const handleCreateOffer = () => {
-    console.log('Creating offer:', { chipType: selectedChip, gamesCount })
-    setShowCreateModal(false)
-    // TODO: Call API
+  // Create offer - NOW CALLS API!
+  const handleCreateOffer = async () => {
+    if (!isAuthenticated) {
+      setError('Please login first')
+      return
+    }
+
+    try {
+      setCreating(true)
+      setError(null)
+
+      const response = await fetch('/api/p2p/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chipType: selectedChip,
+          gamesPlanned: gamesCount,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        setShowCreateModal(false)
+        await loadOffers() // Reload offers
+      } else {
+        setError(data.error || 'Failed to create offer')
+      }
+    } catch (err) {
+      console.error('Error creating offer:', err)
+      setError('Network error')
+    } finally {
+      setCreating(false)
+    }
   }
 
-  const handleAcceptOffer = (offerId: string) => {
-    console.log('Accepting offer:', offerId)
-    // TODO: Call API and redirect to duel
+  const handleAcceptOffer = async (offerId: string) => {
+    if (!isAuthenticated) {
+      setError('Please login first')
+      return
+    }
+
+    try {
+      const response = await fetch(`/api/p2p/orders/${offerId}/join`, {
+        method: 'POST',
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        // Redirect to duel or reload
+        await loadOffers()
+      } else {
+        setError(data.error || 'Failed to accept offer')
+      }
+    } catch (err) {
+      console.error('Error accepting offer:', err)
+      setError('Network error')
+    }
   }
 
   return (
@@ -64,10 +148,19 @@ export default function OffersPage() {
           <button 
             onClick={() => setShowCreateModal(true)}
             className="btn-primary"
+            disabled={!isAuthenticated}
           >
             + Create Offer
           </button>
         </div>
+
+        {/* Error Message */}
+        {error && (
+          <div className="mb-6 p-4 bg-accent-danger/20 border border-accent-danger rounded-xl text-accent-danger">
+            {error}
+            <button onClick={() => setError(null)} className="ml-4 underline">Dismiss</button>
+          </div>
+        )}
 
         {/* Chip Filters */}
         <div className="flex items-center gap-2 mb-6 overflow-x-auto pb-2">
@@ -99,57 +192,77 @@ export default function OffersPage() {
           ))}
         </div>
 
+        {/* Loading State */}
+        {loading && (
+          <div className="text-center py-16">
+            <div className="text-4xl mb-4 animate-spin">⏳</div>
+            <p className="text-gray-400">Loading offers...</p>
+          </div>
+        )}
+
         {/* Offers List */}
-        <div className="space-y-4">
-          {filteredOffers.map((offer) => {
-            const chip = getChipConfig(offer.chipType)
-            return (
-              <div 
-                key={offer.id}
-                className="card-base flex flex-col sm:flex-row sm:items-center justify-between gap-4"
-              >
-                {/* Offer Info */}
-                <div className="flex items-center gap-4">
-                  {/* Chip Badge */}
-                  <div className="w-14 h-14 rounded-xl bg-dark-600 flex items-center justify-center text-2xl">
-                    {chip.emoji}
-                  </div>
-                  
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="font-semibold text-white">{offer.creator.username}</span>
-                      <span className={clsx(
-                        'text-xs px-2 py-0.5 rounded-full',
-                        offer.creator.reliability >= 90 ? 'bg-accent-success/20 text-accent-success' :
-                        offer.creator.reliability >= 70 ? 'bg-accent-warning/20 text-accent-warning' :
-                        'bg-accent-danger/20 text-accent-danger'
-                      )}>
-                        {offer.creator.reliability}% reliable
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3 text-sm text-gray-400">
-                      <span>{chip.emoji} {chip.value} pts per game</span>
-                      <span className="w-1 h-1 rounded-full bg-gray-600" />
-                      <span>{offer.gamesCount} games</span>
-                      <span className="w-1 h-1 rounded-full bg-gray-600" />
-                      <span>Total: {chip.value * offer.gamesCount} pts</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Accept Button */}
-                <button 
-                  onClick={() => handleAcceptOffer(offer.id)}
-                  className="btn-primary whitespace-nowrap"
+        {!loading && (
+          <div className="space-y-4">
+            {filteredOffers.map((offer) => {
+              const chip = getChipConfig(offer.chipType)
+              const isOwner = user?.id === offer.owner.id
+              return (
+                <div 
+                  key={offer.id}
+                  className="card-base flex flex-col sm:flex-row sm:items-center justify-between gap-4"
                 >
-                  Accept Duel
-                </button>
-              </div>
-            )
-          })}
-        </div>
+                  {/* Offer Info */}
+                  <div className="flex items-center gap-4">
+                    {/* Chip Badge */}
+                    <div className="w-14 h-14 rounded-xl bg-dark-600 flex items-center justify-center text-2xl">
+                      {chip.emoji}
+                    </div>
+                    
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="font-semibold text-white">
+                          {offer.owner.username}
+                          {isOwner && <span className="text-accent-primary ml-1">(You)</span>}
+                        </span>
+                        <span className={clsx(
+                          'text-xs px-2 py-0.5 rounded-full',
+                          offer.owner.reliabilityCoefficient >= 0.9 ? 'bg-accent-success/20 text-accent-success' :
+                          offer.owner.reliabilityCoefficient >= 0.7 ? 'bg-accent-warning/20 text-accent-warning' :
+                          'bg-accent-danger/20 text-accent-danger'
+                        )}>
+                          {Math.round(offer.owner.reliabilityCoefficient * 100)}% reliable
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3 text-sm text-gray-400">
+                        <span>{chip.emoji} {chip.value} pts per game</span>
+                        <span className="w-1 h-1 rounded-full bg-gray-600" />
+                        <span>{offer.gamesPlanned} games</span>
+                        <span className="w-1 h-1 rounded-full bg-gray-600" />
+                        <span>Total: {chip.value * offer.gamesPlanned} pts</span>
+                      </div>
+                    </div>
+                  </div>
 
-        {filteredOffers.length === 0 && (
+                  {/* Accept Button */}
+                  {!isOwner && (
+                    <button 
+                      onClick={() => handleAcceptOffer(offer.id)}
+                      className="btn-primary whitespace-nowrap"
+                      disabled={!isAuthenticated}
+                    >
+                      Accept Duel
+                    </button>
+                  )}
+                  {isOwner && (
+                    <span className="text-gray-500 text-sm">Your offer</span>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {!loading && filteredOffers.length === 0 && (
           <div className="text-center py-16">
             <div className="text-6xl mb-4">🎮</div>
             <h3 className="text-xl font-semibold text-white mb-2">No offers available</h3>
@@ -157,6 +270,7 @@ export default function OffersPage() {
             <button 
               onClick={() => setShowCreateModal(true)}
               className="btn-primary"
+              disabled={!isAuthenticated}
             >
               Create Offer
             </button>
@@ -177,6 +291,13 @@ export default function OffersPage() {
                 ✕
               </button>
             </div>
+
+            {/* Error in Modal */}
+            {error && (
+              <div className="mb-4 p-3 bg-accent-danger/20 border border-accent-danger rounded-lg text-accent-danger text-sm">
+                {error}
+              </div>
+            )}
 
             {/* Chip Selection */}
             <div className="mb-6">
@@ -232,12 +353,18 @@ export default function OffersPage() {
                   {getChipConfig(selectedChip).emoji} {getChipConfig(selectedChip).value} pts
                 </span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between mb-2">
                 <span className="text-gray-400">Total stake</span>
                 <span className="text-accent-warning font-bold">
                   💎 {getChipConfig(selectedChip).value * gamesCount} pts
                 </span>
               </div>
+              {user && (
+                <div className="flex justify-between pt-2 border-t border-dark-600">
+                  <span className="text-gray-400">Your balance</span>
+                  <span className="text-white">{user.pointsBalance} pts</span>
+                </div>
+              )}
             </div>
 
             {/* Actions */}
@@ -245,14 +372,16 @@ export default function OffersPage() {
               <button 
                 onClick={() => setShowCreateModal(false)}
                 className="flex-1 btn-secondary"
+                disabled={creating}
               >
                 Cancel
               </button>
               <button 
                 onClick={handleCreateOffer}
                 className="flex-1 btn-primary"
+                disabled={creating}
               >
-                Create Offer
+                {creating ? 'Creating...' : 'Create Offer'}
               </button>
             </div>
           </div>
@@ -261,4 +390,3 @@ export default function OffersPage() {
     </div>
   )
 }
-
