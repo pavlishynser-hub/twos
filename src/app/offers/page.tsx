@@ -45,7 +45,6 @@ export default function OffersPage() {
   const [creating, setCreating] = useState(false)
   const [accepting, setAccepting] = useState<string | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
-  const [showSuccessModal, setShowSuccessModal] = useState(false)
   const [selectedChip, setSelectedChip] = useState<ChipType>('HEART')
   const [gamesCount, setGamesCount] = useState(2)
   const [filterChip, setFilterChip] = useState<ChipType | 'ALL'>('ALL')
@@ -133,9 +132,8 @@ export default function OffersPage() {
       const data = await response.json()
 
       if (data.success) {
-        // Show success modal
-        setShowSuccessModal(true)
-        await loadOffers()
+        // Go directly to game! No confirm needed anymore
+        router.push(`/duel/${offerId}`)
       } else {
         setError(data.error || 'Failed to accept offer')
       }
@@ -294,42 +292,6 @@ export default function OffersPage() {
           </div>
         )}
       </div>
-
-      {/* Success Modal - After accepting offer */}
-      {showSuccessModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="card-base max-w-md w-full text-center animate-scaleIn">
-            <div className="text-6xl mb-4">✅</div>
-            <h2 className="text-2xl font-bold text-white mb-2">Offer Accepted!</h2>
-            <p className="text-gray-400 mb-6">
-              Waiting for the creator to confirm the duel. 
-              They have 2 minutes to respond.
-            </p>
-            <div className="p-4 bg-accent-warning/10 border border-accent-warning/30 rounded-xl mb-6">
-              <p className="text-accent-warning text-sm">
-                ⏳ The creator will see your request in their "My Duels" page and needs to confirm to start the game.
-              </p>
-            </div>
-            <div className="flex gap-3">
-              <button 
-                onClick={() => {
-                  setShowSuccessModal(false)
-                  router.push('/my-duels')
-                }}
-                className="flex-1 btn-primary"
-              >
-                Go to My Duels
-              </button>
-              <button 
-                onClick={() => setShowSuccessModal(false)}
-                className="flex-1 btn-secondary"
-              >
-                Stay Here
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Create Offer Modal */}
       {showCreateModal && (

@@ -173,16 +173,13 @@ export class P2POrderService {
         return { success: false, error: 'Insufficient balance' }
       }
 
-      const expiresAt = new Date(Date.now() + CONSTANTS.CONFIRMATION_TIMEOUT_MS)
-
-      // Update offer and lock opponent stake
+      // Update offer and lock opponent stake - DIRECTLY to MATCHED (no confirm needed!)
       const [updatedOffer] = await prisma.$transaction([
         prisma.duelOffer.update({
           where: { id: orderId },
           data: {
-            status: DuelOfferStatus.WAITING_CREATOR_CONFIRM,
+            status: DuelOfferStatus.MATCHED, // Skip confirm, go directly to MATCHED
             opponentUserId: opponentUserId,
-            expiresAt,
           },
           include: { creator: true },
         }),
@@ -195,7 +192,6 @@ export class P2POrderService {
       return {
         success: true,
         order: this.toDto(updatedOffer, updatedOffer.creator.username),
-        expiresAt: expiresAt.toISOString(),
       }
     } catch (error) {
       console.error('Error joining order:', error)

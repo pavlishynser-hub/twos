@@ -76,11 +76,8 @@ export default function DuelPage() {
         // Check if duel is ready to play
         if (data.data.status === 'MATCHED' || data.data.status === 'IN_PROGRESS') {
           setPhase('input')
-        } else if (data.data.status === 'WAITING_CREATOR_CONFIRM') {
-          // Need to wait for creator confirmation
-          setPhase('loading')
         } else {
-          setError(`Duel is not ready. Status: ${data.data.status}`)
+          setError(`Duel is not ready yet. Status: ${data.data.status}`)
         }
       } else {
         setError(data.error || 'Failed to load duel')
@@ -342,32 +339,11 @@ export default function DuelPage() {
         <div className="card-base relative overflow-hidden">
           <div className="absolute inset-0 bg-gradient-to-b from-accent-primary/5 to-accent-secondary/5" />
 
-          {/* Loading / Waiting for Confirm */}
+          {/* Loading */}
           {phase === 'loading' && (
             <div className="relative text-center py-16">
-              {duel?.status === 'WAITING_CREATOR_CONFIRM' ? (
-                <>
-                  <div className="text-6xl mb-4">⏳</div>
-                  <p className="text-lg font-medium text-white mb-2">
-                    {duel.isCreator 
-                      ? 'Please confirm this duel in My Duels page'
-                      : 'Waiting for creator to confirm...'}
-                  </p>
-                  <p className="text-sm text-gray-400 mb-6">
-                    {duel.isCreator 
-                      ? 'Go back and click CONFIRM to start'
-                      : 'The game will start once they confirm'}
-                  </p>
-                  <Link href="/my-duels" className="btn-primary">
-                    Go to My Duels
-                  </Link>
-                </>
-              ) : (
-                <>
-                  <div className="w-16 h-16 mx-auto mb-4 rounded-full border-4 border-accent-primary border-t-transparent animate-spin" />
-                  <p className="text-lg font-medium text-white">Loading duel...</p>
-                </>
-              )}
+              <div className="w-16 h-16 mx-auto mb-4 rounded-full border-4 border-accent-primary border-t-transparent animate-spin" />
+              <p className="text-lg font-medium text-white">Loading duel...</p>
             </div>
           )}
 
