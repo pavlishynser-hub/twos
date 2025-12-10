@@ -1,7 +1,7 @@
 /**
  * Auth Service
  * Handles user registration, login, sessions
- * Now uses Prisma for database persistence
+ * Sessions stored in DATABASE for serverless compatibility
  */
 
 import prisma from '@/lib/prisma'
@@ -28,20 +28,6 @@ export interface AuthResponse {
   token?: string
   error?: string
 }
-
-export interface SessionData {
-  userId: string
-  username: string
-  email: string
-  createdAt: number
-  expiresAt: number
-}
-
-// ============================================
-// IN-MEMORY SESSION STORE (sessions only, users in DB)
-// ============================================
-
-const sessionsStore: Map<string, SessionData> = new Map()
 
 // Session settings
 const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
@@ -91,7 +77,6 @@ function isValidEmail(email: string): boolean {
  * Validate username
  */
 function isValidUsername(username: string): boolean {
-  // 3-20 characters, alphanumeric and underscores
   const usernameRegex = /^[a-zA-Z0-9_]{3,20}$/
   return usernameRegex.test(username)
 }
@@ -110,12 +95,12 @@ function isValidPassword(password: string): { valid: boolean; message?: string }
 }
 
 // ============================================
-// AUTH SERVICE
+// AUTH SERVICE - NOW WITH DATABASE SESSIONS
 // ============================================
 
 export class AuthService {
   /**
-   * Register new user - NOW SAVES TO DATABASE
+   * Register new user - SAVES TO DATABASE
    */
   static async register(request: RegisterRequest): Promise<AuthResponse> {
     const { username, email, password } = request
@@ -158,7 +143,10 @@ export class AuthService {
 
       // Create user in database
       const passwordHash = await hashPassword(password)
+      const token = generateToken()
+      const expiresAt = new Date(Date.now() + SESSION_DURATION_MS)
       
+      // Create user and session in transaction
       const user = await prisma.user.create({
         data: {
           username,
@@ -168,6 +156,12 @@ export class AuthService {
           totalDeals: 0,
           completedDeals: 0,
           reliabilityPercent: 100.0,
+          sessions: {
+            create: {
+              token,
+              expiresAt,
+            }
+          }
         }
       })
 
@@ -181,17 +175,6 @@ export class AuthService {
         }
       })
 
-      // Create session
-      const token = generateToken()
-      const session: SessionData = {
-        userId: user.id,
-        username: user.username,
-        email: user.email || '',
-        createdAt: Date.now(),
-        expiresAt: Date.now() + SESSION_DURATION_MS,
-      }
-      sessionsStore.set(token, session)
-
       return {
         success: true,
         user: this.toUserDto(user),
@@ -204,7 +187,7 @@ export class AuthService {
   }
 
   /**
-   * Login user - NOW READS FROM DATABASE
+   * Login user - READS FROM DATABASE
    */
   static async login(request: LoginRequest): Promise<AuthResponse> {
     const { email, password } = request
@@ -225,16 +208,17 @@ export class AuthService {
         return { success: false, error: 'Invalid email or password' }
       }
 
-      // Create session
+      // Create session in database
       const token = generateToken()
-      const session: SessionData = {
-        userId: user.id,
-        username: user.username,
-        email: user.email || '',
-        createdAt: Date.now(),
-        expiresAt: Date.now() + SESSION_DURATION_MS,
-      }
-      sessionsStore.set(token, session)
+      const expiresAt = new Date(Date.now() + SESSION_DURATION_MS)
+
+      await prisma.session.create({
+        data: {
+          token,
+          userId: user.id,
+          expiresAt,
+        }
+      })
 
       return {
         success: true,
@@ -248,41 +232,44 @@ export class AuthService {
   }
 
   /**
-   * Logout user (invalidate session)
+   * Logout user (delete session from database)
    */
   static async logout(token: string): Promise<boolean> {
-    return sessionsStore.delete(token)
+    try {
+      await prisma.session.deleteMany({
+        where: { token }
+      })
+      return true
+    } catch (error) {
+      console.error('Logout error:', error)
+      return false
+    }
   }
 
   /**
-   * Validate session and get user
+   * Validate session from DATABASE
    */
   static async validateSession(token: string): Promise<{ valid: boolean; user?: UserDto }> {
-    const session = sessionsStore.get(token)
-    
-    if (!session) {
-      return { valid: false }
-    }
-
-    // Check if expired
-    if (Date.now() > session.expiresAt) {
-      sessionsStore.delete(token)
-      return { valid: false }
-    }
-
     try {
-      const user = await prisma.user.findUnique({
-        where: { id: session.userId }
+      const session = await prisma.session.findUnique({
+        where: { token },
+        include: { user: true }
       })
       
-      if (!user) {
-        sessionsStore.delete(token)
+      if (!session) {
+        return { valid: false }
+      }
+
+      // Check if expired
+      if (new Date() > session.expiresAt) {
+        // Delete expired session
+        await prisma.session.delete({ where: { id: session.id } })
         return { valid: false }
       }
 
       return {
         valid: true,
-        user: this.toUserDto(user),
+        user: this.toUserDto(session.user),
       }
     } catch (error) {
       console.error('Session validation error:', error)
@@ -313,7 +300,6 @@ export class AuthService {
     updates: { username?: string; telegramId?: string }
   ): Promise<{ success: boolean; user?: UserDto; error?: string }> {
     try {
-      // Validate username if provided
       if (updates.username) {
         if (!isValidUsername(updates.username)) {
           return { 
@@ -322,7 +308,6 @@ export class AuthService {
           }
         }
 
-        // Check if username taken
         const existing = await prisma.user.findFirst({
           where: {
             username: updates.username,
@@ -369,31 +354,28 @@ export class AuthService {
         return { success: false, error: 'User not found' }
       }
 
-      // Verify current password
       const isValid = await verifyPassword(currentPassword, user.passwordHash)
       if (!isValid) {
         return { success: false, error: 'Current password is incorrect' }
       }
 
-      // Validate new password
       const passwordCheck = isValidPassword(newPassword)
       if (!passwordCheck.valid) {
         return { success: false, error: passwordCheck.message }
       }
 
-      // Update password
       const newHash = await hashPassword(newPassword)
-      await prisma.user.update({
-        where: { id: userId },
-        data: { passwordHash: newHash }
-      })
-
-      // Invalidate all sessions for this user
-      sessionsStore.forEach((session, token) => {
-        if (session.userId === userId) {
-          sessionsStore.delete(token)
-        }
-      })
+      
+      // Update password and delete all sessions
+      await prisma.$transaction([
+        prisma.user.update({
+          where: { id: userId },
+          data: { passwordHash: newHash }
+        }),
+        prisma.session.deleteMany({
+          where: { userId }
+        })
+      ])
 
       return { success: true }
     } catch (error) {
@@ -420,7 +402,6 @@ export class AuthService {
       })
       if (!user) return null
 
-      // Calculate stats from actual matches
       const matches = await prisma.duelMatch.findMany({
         where: {
           OR: [
@@ -450,7 +431,7 @@ export class AuthService {
         losses,
         winRate: totalDuels > 0 ? Math.round((wins / totalDuels) * 100) : 0,
         totalEarnings: user.pointsBalance - INITIAL_BALANCE,
-        currentStreak: 0, // TODO: Calculate actual streak
+        currentStreak: 0,
         reliabilityPercent: user.reliabilityPercent,
       }
     } catch (error) {
@@ -482,7 +463,6 @@ export class AuthService {
         return { success: false, error: 'Insufficient balance' }
       }
 
-      // Update balance and create transaction in one transaction
       await prisma.$transaction([
         prisma.user.update({
           where: { id: userId },
@@ -535,7 +515,6 @@ export class AuthService {
   static async createDemoUser(): Promise<AuthResponse> {
     const demoEmail = 'demo@twos.game'
     
-    // Check if already exists
     const existing = await prisma.user.findUnique({
       where: { email: demoEmail }
     })
@@ -549,5 +528,22 @@ export class AuthService {
       email: demoEmail,
       password: 'demo123',
     })
+  }
+
+  /**
+   * Clean up expired sessions (call periodically)
+   */
+  static async cleanupExpiredSessions(): Promise<number> {
+    try {
+      const result = await prisma.session.deleteMany({
+        where: {
+          expiresAt: { lt: new Date() }
+        }
+      })
+      return result.count
+    } catch (error) {
+      console.error('Cleanup sessions error:', error)
+      return 0
+    }
   }
 }
