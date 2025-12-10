@@ -51,30 +51,25 @@ export async function POST(
     }
 
     const { orderId } = await params
+    console.log(`[Confirm] User ${user.id} confirming order ${orderId}`)
     
-    // Confirm order
+    // Confirm order using service (which validates and updates status)
     const result = await P2POrderService.confirmOrder(orderId, user.id)
 
-    // Get the offer
-    const offer = await prisma.duelOffer.findUnique({
-      where: { id: orderId },
-      include: {
-        creator: { select: { id: true, username: true } },
-      }
-    })
-
-    if (!offer) {
+    if (!result.success) {
       return NextResponse.json(
-        { success: false, error: 'Order not found' },
-        { status: 404 }
+        { success: false, error: result.error },
+        { status: 400 }
       )
     }
+
+    console.log(`[Confirm] Order ${orderId} confirmed successfully`)
 
     return NextResponse.json({
       success: true,
       data: {
-        order: result.order,
-        message: 'Duel confirmed! Game started.',
+        offer: result.order,
+        message: 'Duel confirmed! Ready to play.',
       },
     })
   } catch (error) {
