@@ -10,13 +10,14 @@ import { useAuth } from '@/contexts/AuthContext'
 interface DuelOffer {
   id: string
   creatorUserId: string
+  opponentUserId: string | null
   chipType: string
   chipPointsValue: number
   gamesCount: number
   status: string
   createdAt: string
   expiresAt: string | null
-  creator?: { username: string }
+  creator?: { id: string; username: string }
 }
 
 const CHIP_EMOJI: Record<string, string> = {
@@ -87,18 +88,25 @@ export default function MyDuelsPage() {
   useEffect(() => {
     if (isAuthenticated) {
       loadOffers()
+      // Auto-refresh every 10 seconds
+      const interval = setInterval(loadOffers, 10000)
+      return () => clearInterval(interval)
     }
   }, [isAuthenticated, loadOffers])
 
+  // Helper to check role
+  const isCreator = (offer: DuelOffer) => offer.creatorUserId === user?.id
+  const isOpponent = (offer: DuelOffer) => offer.opponentUserId === user?.id
+
   // Filter offers
   const pendingConfirm = offers.filter(o => 
-    o.status === 'WAITING_CREATOR_CONFIRM' && o.creatorUserId === user?.id
+    o.status === 'WAITING_CREATOR_CONFIRM'
   )
   const activeOffers = offers.filter(o => 
     o.status === 'MATCHED' || o.status === 'IN_PROGRESS'
   )
   const myOpenOffers = offers.filter(o => 
-    o.status === 'OPEN' && o.creatorUserId === user?.id
+    o.status === 'OPEN' && isCreator(o)
   )
 
   const displayedOffers = filter === 'all' 
@@ -107,7 +115,7 @@ export default function MyDuelsPage() {
       ? pendingConfirm 
       : activeOffers
 
-  // Confirm offer
+  // Confirm offer (creator only)
   const handleConfirm = async (offerId: string) => {
     try {
       setConfirming(offerId)
@@ -169,9 +177,14 @@ export default function MyDuelsPage() {
     <div className="min-h-screen pb-24 md:pb-8">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2">My Duels</h1>
-          <p className="text-gray-400">Manage your active and pending duels</p>
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-3xl font-bold text-white mb-2">My Duels</h1>
+            <p className="text-gray-400">Manage your active and pending duels</p>
+          </div>
+          <Link href="/offers" className="btn-secondary">
+            ← Back to Offers
+          </Link>
         </div>
 
         {/* Error */}
@@ -186,7 +199,7 @@ export default function MyDuelsPage() {
         <div className="grid grid-cols-3 gap-4 mb-8">
           <div className="card-base text-center">
             <p className="text-2xl font-bold text-accent-warning">{pendingConfirm.length}</p>
-            <p className="text-sm text-gray-400">Need Confirm</p>
+            <p className="text-sm text-gray-400">Need Action</p>
           </div>
           <div className="card-base text-center">
             <p className="text-2xl font-bold text-accent-success">{myOpenOffers.length}</p>
@@ -198,11 +211,20 @@ export default function MyDuelsPage() {
           </div>
         </div>
 
-        {/* Pending Confirmations Alert */}
-        {pendingConfirm.length > 0 && (
+        {/* Pending Confirmations Alert - For Creator */}
+        {pendingConfirm.filter(o => isCreator(o)).length > 0 && (
           <div className="mb-6 p-4 bg-accent-warning/20 border border-accent-warning rounded-xl">
             <p className="text-accent-warning font-medium">
-              ⚠️ You have {pendingConfirm.length} duel(s) waiting for your confirmation!
+              ⚠️ You have {pendingConfirm.filter(o => isCreator(o)).length} duel(s) waiting for YOUR confirmation!
+            </p>
+          </div>
+        )}
+
+        {/* Waiting for opponent confirmation - For Opponent */}
+        {pendingConfirm.filter(o => isOpponent(o)).length > 0 && (
+          <div className="mb-6 p-4 bg-dark-700 border border-dark-500 rounded-xl">
+            <p className="text-gray-300 font-medium">
+              ⏳ You have {pendingConfirm.filter(o => isOpponent(o)).length} duel(s) waiting for creator confirmation
             </p>
           </div>
         )}
@@ -241,8 +263,10 @@ export default function MyDuelsPage() {
         {!loading && (
           <div className="space-y-4">
             {displayedOffers.map((offer) => {
-              const isCreator = offer.creatorUserId === user?.id
-              const needsConfirm = offer.status === 'WAITING_CREATOR_CONFIRM' && isCreator
+              const amCreator = isCreator(offer)
+              const amOpponent = isOpponent(offer)
+              const needsMyConfirm = offer.status === 'WAITING_CREATOR_CONFIRM' && amCreator
+              const waitingForCreator = offer.status === 'WAITING_CREATOR_CONFIRM' && amOpponent
               const chipEmoji = CHIP_EMOJI[offer.chipType] || '🎮'
               
               return (
@@ -250,14 +274,14 @@ export default function MyDuelsPage() {
                   key={offer.id}
                   className={clsx(
                     'card-base',
-                    needsConfirm && 'border border-accent-warning/50 bg-accent-warning/5'
+                    needsMyConfirm && 'border-2 border-accent-warning bg-accent-warning/5 animate-pulse'
                   )}
                 >
-                  {/* Status Banner */}
-                  {needsConfirm && (
-                    <div className="flex items-center justify-between mb-4 p-3 bg-accent-warning/10 rounded-lg">
-                      <span className="text-accent-warning font-medium">
-                        ⚠️ Opponent found! Confirm to start duel
+                  {/* Status Banner - Creator needs to confirm */}
+                  {needsMyConfirm && (
+                    <div className="flex items-center justify-between mb-4 p-3 bg-accent-warning/20 rounded-lg">
+                      <span className="text-accent-warning font-bold text-lg">
+                        🔔 Opponent found! Confirm NOW to start!
                       </span>
                       {offer.expiresAt && (
                         <CountdownTimer deadline={new Date(offer.expiresAt)} />
@@ -265,10 +289,11 @@ export default function MyDuelsPage() {
                     </div>
                   )}
 
-                  {offer.status === 'WAITING_CREATOR_CONFIRM' && !isCreator && (
+                  {/* Status Banner - Waiting for creator */}
+                  {waitingForCreator && (
                     <div className="flex items-center justify-between mb-4 p-3 bg-dark-600 rounded-lg">
-                      <span className="text-gray-400">
-                        ⏳ Waiting for creator to confirm...
+                      <span className="text-gray-300">
+                        ⏳ Waiting for {offer.creator?.username || 'creator'} to confirm...
                       </span>
                       {offer.expiresAt && (
                         <CountdownTimer deadline={new Date(offer.expiresAt)} />
@@ -294,8 +319,12 @@ export default function MyDuelsPage() {
                             offer.status === 'OPEN' && 'bg-accent-success/20 text-accent-success',
                             offer.status === 'WAITING_CREATOR_CONFIRM' && 'bg-accent-warning/20 text-accent-warning',
                             offer.status === 'MATCHED' && 'bg-accent-primary/20 text-accent-primary',
+                            offer.status === 'CANCELLED' && 'bg-gray-500/20 text-gray-400',
                           )}>
                             {offer.status.replace(/_/g, ' ')}
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            {amCreator ? '(Creator)' : '(Opponent)'}
                           </span>
                         </div>
                         <div className="flex items-center gap-3 text-sm text-gray-400">
@@ -310,17 +339,19 @@ export default function MyDuelsPage() {
 
                     {/* Action Buttons */}
                     <div className="flex gap-2">
-                      {needsConfirm && (
+                      {/* Creator needs to confirm */}
+                      {needsMyConfirm && (
                         <button 
                           onClick={() => handleConfirm(offer.id)}
-                          className="btn-primary"
+                          className="btn-primary bg-accent-warning hover:bg-accent-warning/80 text-black font-bold px-6"
                           disabled={confirming === offer.id}
                         >
-                          {confirming === offer.id ? 'Confirming...' : '✓ Confirm'}
+                          {confirming === offer.id ? 'Confirming...' : '✓ CONFIRM NOW'}
                         </button>
                       )}
                       
-                      {offer.status === 'OPEN' && isCreator && (
+                      {/* Open offer - can cancel */}
+                      {offer.status === 'OPEN' && amCreator && (
                         <button 
                           onClick={() => handleCancel(offer.id)}
                           className="btn-secondary text-accent-danger"
@@ -329,9 +360,10 @@ export default function MyDuelsPage() {
                         </button>
                       )}
 
+                      {/* Matched - go to game */}
                       {offer.status === 'MATCHED' && (
                         <Link href={`/duel/${offer.id}`} className="btn-primary">
-                          Play →
+                          Play Game →
                         </Link>
                       )}
                     </div>
@@ -346,7 +378,7 @@ export default function MyDuelsPage() {
           <div className="text-center py-16">
             <div className="text-6xl mb-4">⚔️</div>
             <h3 className="text-xl font-semibold text-white mb-2">No duels yet</h3>
-            <p className="text-gray-400 mb-6">Create your first offer or accept someone else's!</p>
+            <p className="text-gray-400 mb-6">Create your first offer or accept someone elses!</p>
             <Link href="/offers" className="btn-primary inline-block">
               Browse Offers
             </Link>

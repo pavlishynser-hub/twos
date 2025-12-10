@@ -29,7 +29,7 @@ async function getCurrentUser() {
 
 /**
  * GET /api/p2p/my-offers
- * Get all offers where user is creator or opponent
+ * Get all offers where user is creator OR opponent
  */
 export async function GET(request: NextRequest) {
   try {
@@ -42,19 +42,26 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Get offers where user is creator
+    console.log(`[MyOffers] Loading offers for user ${user.id}`)
+
+    // Get offers where user is creator OR opponent
     const offers = await prisma.duelOffer.findMany({
       where: {
-        creatorUserId: user.id,
+        OR: [
+          { creatorUserId: user.id },
+          { opponentUserId: user.id },
+        ],
       },
       include: {
         creator: {
-          select: { username: true }
+          select: { id: true, username: true }
         }
       },
       orderBy: { createdAt: 'desc' },
       take: 50,
     })
+
+    console.log(`[MyOffers] Found ${offers.length} offers for user ${user.id}`)
 
     return NextResponse.json({
       success: true,
@@ -68,4 +75,3 @@ export async function GET(request: NextRequest) {
     )
   }
 }
-

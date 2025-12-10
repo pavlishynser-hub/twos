@@ -1,8 +1,10 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { clsx } from 'clsx'
 import { useAuth } from '@/contexts/AuthContext'
+import Link from 'next/link'
 
 // Types
 type ChipType = 'SMILE' | 'HEART' | 'FIRE' | 'RING'
@@ -36,11 +38,14 @@ const CHIPS: ChipConfig[] = [
 ]
 
 export default function OffersPage() {
+  const router = useRouter()
   const { user, isAuthenticated } = useAuth()
   const [offers, setOffers] = useState<Offer[]>([])
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
+  const [accepting, setAccepting] = useState<string | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [showSuccessModal, setShowSuccessModal] = useState(false)
   const [selectedChip, setSelectedChip] = useState<ChipType>('HEART')
   const [gamesCount, setGamesCount] = useState(2)
   const [filterChip, setFilterChip] = useState<ChipType | 'ALL'>('ALL')
@@ -118,6 +123,9 @@ export default function OffersPage() {
     }
 
     try {
+      setAccepting(offerId)
+      setError(null)
+
       const response = await fetch(`/api/p2p/orders/${offerId}/join`, {
         method: 'POST',
       })
@@ -125,7 +133,8 @@ export default function OffersPage() {
       const data = await response.json()
 
       if (data.success) {
-        // Redirect to duel or reload
+        // Show success modal
+        setShowSuccessModal(true)
         await loadOffers()
       } else {
         setError(data.error || 'Failed to accept offer')
@@ -133,6 +142,8 @@ export default function OffersPage() {
     } catch (err) {
       console.error('Error accepting offer:', err)
       setError('Network error')
+    } finally {
+      setAccepting(null)
     }
   }
 
@@ -145,13 +156,18 @@ export default function OffersPage() {
             <h1 className="text-3xl font-bold text-white">P2P Offers Board</h1>
             <p className="text-gray-400">Accept offers or create your own duel</p>
           </div>
-          <button 
-            onClick={() => setShowCreateModal(true)}
-            className="btn-primary"
-            disabled={!isAuthenticated}
-          >
-            + Create Offer
-          </button>
+          <div className="flex gap-3">
+            <Link href="/my-duels" className="btn-secondary">
+              My Duels
+            </Link>
+            <button 
+              onClick={() => setShowCreateModal(true)}
+              className="btn-primary"
+              disabled={!isAuthenticated}
+            >
+              + Create Offer
+            </button>
+          </div>
         </div>
 
         {/* Error Message */}
@@ -206,6 +222,7 @@ export default function OffersPage() {
             {filteredOffers.map((offer) => {
               const chip = getChipConfig(offer.chipType)
               const isOwner = user?.id === offer.owner.id
+              const isAccepting = accepting === offer.id
               return (
                 <div 
                   key={offer.id}
@@ -248,9 +265,9 @@ export default function OffersPage() {
                     <button 
                       onClick={() => handleAcceptOffer(offer.id)}
                       className="btn-primary whitespace-nowrap"
-                      disabled={!isAuthenticated}
+                      disabled={!isAuthenticated || isAccepting}
                     >
-                      Accept Duel
+                      {isAccepting ? 'Accepting...' : 'Accept Duel'}
                     </button>
                   )}
                   {isOwner && (
@@ -277,6 +294,42 @@ export default function OffersPage() {
           </div>
         )}
       </div>
+
+      {/* Success Modal - After accepting offer */}
+      {showSuccessModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="card-base max-w-md w-full text-center animate-scaleIn">
+            <div className="text-6xl mb-4">✅</div>
+            <h2 className="text-2xl font-bold text-white mb-2">Offer Accepted!</h2>
+            <p className="text-gray-400 mb-6">
+              Waiting for the creator to confirm the duel. 
+              They have 2 minutes to respond.
+            </p>
+            <div className="p-4 bg-accent-warning/10 border border-accent-warning/30 rounded-xl mb-6">
+              <p className="text-accent-warning text-sm">
+                ⏳ The creator will see your request in their "My Duels" page and needs to confirm to start the game.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => {
+                  setShowSuccessModal(false)
+                  router.push('/my-duels')
+                }}
+                className="flex-1 btn-primary"
+              >
+                Go to My Duels
+              </button>
+              <button 
+                onClick={() => setShowSuccessModal(false)}
+                className="flex-1 btn-secondary"
+              >
+                Stay Here
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create Offer Modal */}
       {showCreateModal && (
